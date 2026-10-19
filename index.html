@@ -1,0 +1,916 @@
+
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Industrial Manager</title>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+  <style>
+    :root {
+      --bg: #f4f6fa;
+      --card: #ffffff;
+      --text: #182230;
+      --muted: #667085;
+      --primary: #2457d6;
+      --border: #e3e7ef;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+
+    header {
+      background: #172554;
+      color: white;
+      padding: 20px 28px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+    }
+
+    header h1 { margin: 0; font-size: 22px; }
+
+    main {
+      max-width: 1200px;
+      margin: auto;
+      padding: 28px;
+    }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 22px;
+      margin-bottom: 20px;
+    }
+
+    .login {
+      max-width: 420px;
+      margin: 70px auto;
+    }
+
+    input, button {
+      font: inherit;
+      padding: 12px;
+      border-radius: 8px;
+    }
+
+    input {
+      width: 100%;
+      margin: 8px 0 14px;
+      border: 1px solid #cbd5e1;
+    }
+
+    button {
+      border: 0;
+      cursor: pointer;
+      background: var(--primary);
+      color: white;
+      font-weight: bold;
+    }
+
+    button:disabled {
+      opacity: 0.6;
+      cursor: wait;
+    }
+
+    .secondary { background: #475569; }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+      gap: 16px;
+    }
+
+    .metric {
+      font-size: 30px;
+      font-weight: bold;
+      margin-top: 10px;
+    }
+
+    .muted { color: var(--muted); }
+
+    .project {
+      border: 1px solid var(--border);
+      border-left: 6px solid #16a34a;
+      border-radius: 10px;
+      padding: 18px;
+      margin: 14px 0;
+      background: white;
+    }
+
+    .project.red { border-left-color: #dc2626; }
+    .project.yellow { border-left-color: #d97706; }
+    .project.green { border-left-color: #16a34a; }
+
+    .status {
+      display: inline-block;
+      border-radius: 20px;
+      padding: 6px 10px;
+      font-size: 12px;
+      font-weight: bold;
+    }
+
+    .red .status { background: #fee2e2; color: #991b1b; }
+    .yellow .status { background: #fef3c7; color: #92400e; }
+    .green .status { background: #dcfce7; color: #166534; }
+
+    .progress {
+      height: 9px;
+      background: #e5e7eb;
+      border-radius: 20px;
+      overflow: hidden;
+      margin-top: 10px;
+    }
+
+    .progress div {
+      height: 100%;
+      background: var(--primary);
+    }
+
+    .nav {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-bottom: 22px;
+    }
+
+    .nav button {
+      background: #e2e8f0;
+      color: #1e293b;
+    }
+
+    .nav button.active {
+      background: var(--primary);
+      color: white;
+    }
+
+    #message {
+      margin-top: 12px;
+      color: #b91c1c;
+      overflow-wrap: anywhere;
+    }
+
+    [hidden] { display: none !important; }
+
+    @media (max-width: 600px) {
+      main { padding: 16px; }
+      header { padding: 16px; }
+    }
+  </style>
+</head>
+
+<body>
+  <header>
+    <h1>Industrial Manager</h1>
+    <button id="logoutBtn" class="secondary" hidden>
+      Cerrar sesión
+    </button>
+  </header>
+
+  <main>
+    <section id="loginView" class="card login">
+      <h2>Iniciar sesión</h2>
+      <p class="muted">Ingresa con tu cuenta de la empresa.</p>
+
+      <form id="loginForm">
+        <label for="email">Correo electrónico</label>
+        <input
+          id="email"
+          type="email"
+          required
+          autocomplete="username"
+        />
+
+        <label for="password">Contraseña</label>
+        <input
+          id="password"
+          type="password"
+          required
+          autocomplete="current-password"
+        />
+
+        <button id="loginBtn" type="submit" style="width:100%">
+          Entrar
+        </button>
+      </form>
+
+      <p id="message" role="status" aria-live="polite"></p>
+    </section>
+
+    <section id="appView" hidden>
+      <h2>Dashboard</h2>
+      <p id="welcome" class="muted"></p>
+
+      <div class="card">
+        <h3>Mi perfil</h3>
+        <p><strong>Nombre:</strong> <span id="employeeName">—</span></p>
+        <p><strong>Puesto:</strong> <span id="employeeRole">—</span></p>
+        <p><strong>Código:</strong> <span id="employeeCode">—</span></p>
+        <p><strong>Correo:</strong> <span id="employeeEmail">—</span></p>
+      </div>
+
+      <nav class="nav" aria-label="Módulos">
+        <button class="active" data-page="projects">Proyectos</button>
+        <button data-page="drawings">Planos</button>
+        <button data-page="materials">Materiales</button>
+        <button data-page="transport">Transporte</button>
+        <button data-page="machinery">Maquinaria</button>
+        <button data-page="employees">Empleados</button>
+      </nav>
+
+      <section id="projectsPage">
+        <div class="grid">
+          <div class="card">
+            <div class="muted">Proyectos</div>
+            <div id="totalProjects" class="metric">0</div>
+          </div>
+
+          <div class="card">
+            <div class="muted">Atrasados</div>
+            <div id="overdueProjects" class="metric">0</div>
+          </div>
+
+          <div class="card">
+            <div class="muted">Requieren atención</div>
+            <div id="warningProjects" class="metric">0</div>
+          </div>
+
+          <div class="card">
+            <div class="muted">Al corriente</div>
+            <div id="onTrackProjects" class="metric">0</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div style="display:flex;justify-content:space-between;
+                      align-items:center;gap:12px;flex-wrap:wrap">
+            <h3>Proyectos actuales</h3>
+            <button id="refreshBtn">Actualizar</button>
+          </div>
+
+          <p id="projectMessage" class="muted">Cargando proyectos...</p>
+          <div id="projectList"></div>
+        </div>
+      </section>
+
+      <section id="otherPage" class="card" hidden>
+        <h2 id="otherTitle"></h2>
+        <p id="otherDescription" class="muted"></p>
+        <p id="moduleMessage" class="muted"></p>
+        <div id="moduleContent"></div>
+      </section>
+    </section>
+  </main>
+
+  <script>
+    // 1. Configuración de Supabase.
+    const SUPABASE_URL =
+      "https://hyxhrlsutaanulvpycid.supabase.co";
+
+    const SUPABASE_ANON_KEY = "sb_publishable_gCZisdiEzJsXdpmg1RZZ5Q_3-LYG4hg";
+
+    const db = window.supabase.createClient(
+      SUPABASE_URL,
+      SUPABASE_ANON_KEY
+    );
+
+    const $ = (id) => document.getElementById(id);
+
+    let currentUser = null;
+    let currentEmployee = null;
+
+    const moduleInfo = {
+      drawings: {
+        title: "Planos técnicos",
+        description:
+          "Aquí conectaremos los planos asociados a cada proyecto."
+      },
+      materials: {
+        title: "Materiales para hornos",
+        description:
+          "Aquí conectaremos materiales, calidad, proveedores, precios y plazos."
+      },
+      transport: {
+        title: "Transporte",
+        description:
+          "Aquí conectaremos las empresas de transporte, vehículos y tarifas."
+      },
+      machinery: {
+        title: "Maquinaria pesada",
+        description:
+          "Aquí conectaremos maquinaria, proveedores, alquileres y proyectos."
+      },
+      employees: {
+        title: "Empleados",
+        description:
+          "Aquí conectaremos los perfiles y departamentos autorizados."
+      }
+    };
+
+    // 2. Mostrar la pantalla de login.
+    function showLogin(message = "") {
+      $("loginView").hidden = false;
+      $("appView").hidden = true;
+      $("logoutBtn").hidden = true;
+      $("message").textContent = message;
+
+      currentUser = null;
+      currentEmployee = null;
+    }
+
+    // 3. Obtener el perfil del empleado autenticado.
+    async function loadEmployeeProfile(userId) {
+      const { data: employee, error } = await db
+        .from("employees")
+        .select(`
+          id,
+          auth_user_id,
+          employee_code,
+          first_name,
+          last_name,
+          email,
+          job_title
+        `)
+        .eq("auth_user_id", userId)
+        .maybeSingle();
+
+      if (error) {
+        throw new Error(
+          "No se pudo consultar el perfil del empleado: " +
+          error.message
+        );
+      }
+
+      if (!employee) {
+        throw new Error(
+          "Tu cuenta inició sesión, pero no tiene un perfil " +
+          "asociado en employees. Comprueba auth_user_id."
+        );
+      }
+
+      return employee;
+    }
+
+    // 4. Mostrar el perfil y entrar al dashboard.
+    function showApp(user, employee) {
+      currentUser = user;
+      currentEmployee = employee;
+
+      const fullName = [
+        employee.first_name,
+        employee.last_name
+      ].filter(Boolean).join(" ").trim();
+
+      const displayName =
+        fullName || user.email || "Empleado";
+
+      $("welcome").textContent =
+        "Bienvenido, " + displayName;
+
+      $("employeeName").textContent = displayName;
+      $("employeeRole").textContent =
+        employee.job_title || "Por asignar";
+      $("employeeCode").textContent =
+        employee.employee_code || "Sin código";
+      $("employeeEmail").textContent =
+        employee.email || user.email || "Sin correo";
+
+      $("loginView").hidden = true;
+      $("appView").hidden = false;
+      $("logoutBtn").hidden = false;
+      $("message").textContent = "";
+    }
+
+    // 5. Cargar perfil y solo entonces abrir el dashboard.
+    async function enterApplication(user) {
+      try {
+        const employee = await loadEmployeeProfile(user.id);
+
+        showApp(user, employee);
+        await loadProjects();
+      } catch (error) {
+        console.error("Error de perfil:", error);
+
+        // Evitar dejar una sesión sin perfil en una pantalla
+        // que parece haber iniciado correctamente.
+        await db.auth.signOut();
+
+        showLogin(error.message);
+        throw error;
+      }
+    }
+
+    // 6. Iniciar sesión.
+    $("loginForm").addEventListener("submit", async (event) => {
+      event.preventDefault();
+
+      const button = $("loginBtn");
+      button.disabled = true;
+      $("message").textContent = "";
+
+      try {
+        const { data, error } = await db.auth.signInWithPassword({
+          email: $("email").value.trim(),
+          password: $("password").value
+        });
+
+        if (error) {
+          throw error;
+        }
+
+        await enterApplication(data.user);
+      } catch (error) {
+        console.error("Error al iniciar sesión:", error);
+
+        if (!currentUser) {
+          showLogin("No se pudo iniciar sesión: " + error.message);
+        }
+      } finally {
+        button.disabled = false;
+      }
+    });
+
+    // 7. Cerrar sesión.
+    $("logoutBtn").addEventListener("click", async () => {
+      const button = $("logoutBtn");
+      button.disabled = true;
+
+      try {
+        const { error } = await db.auth.signOut();
+
+        if (error) {
+          throw error;
+        }
+
+        showLogin();
+        $("password").value = "";
+      } catch (error) {
+        alert("No se pudo cerrar sesión: " + error.message);
+      } finally {
+        button.disabled = false;
+      }
+    });
+
+    // 8. Clasificar el estado del proyecto.
+    function getProjectStatus(project, publishedUpdate) {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+
+      const dueDate = project.due_date
+        ? new Date(project.due_date + "T00:00:00")
+        : null;
+
+      const progress = Number(
+        project.progress_percentage ?? 0
+      );
+
+      if (progress >= 100) {
+        return { type: "green", label: "Completado" };
+      }
+
+      if (dueDate && dueDate < today) {
+        return { type: "red", label: "Atrasado" };
+      }
+
+      const daysLeft = dueDate
+        ? Math.round((dueDate - today) / 86400000)
+        : Infinity;
+
+      if (
+        dueDate &&
+        daysLeft >= 0 &&
+        daysLeft <= 2 &&
+        !publishedUpdate
+      ) {
+        return {
+          type: "yellow",
+          label: "Requiere atención"
+        };
+      }
+
+      return { type: "green", label: "Al corriente" };
+    }
+
+    // 9. Cargar proyectos desde Supabase.
+    async function loadProjects() {
+      $("projectMessage").textContent = "Cargando proyectos...";
+      $("projectList").replaceChildren();
+
+      try {
+        const { data: projects, error } = await db
+          .from("projects")
+          .select("*")
+          .order("due_date", { ascending: true });
+
+        if (error) throw error;
+
+        const { data: updates, error: updatesError } = await db
+          .from("project_updates")
+          .select("project_id, published_at")
+          .not("published_at", "is", null);
+
+        if (updatesError) throw updatesError;
+
+        const publishedProjectIds = new Set(
+          updates.map(update => String(update.project_id))
+        );
+
+        const counts = { red: 0, yellow: 0, green: 0 };
+
+        $("totalProjects").textContent = projects.length;
+
+        if (projects.length === 0) {
+          $("projectMessage").textContent =
+            "No hay proyectos visibles para esta cuenta.";
+
+          updateCounts(counts);
+          return;
+        }
+
+        $("projectMessage").textContent = "";
+
+        for (const project of projects) {
+          const isPublished = publishedProjectIds.has(
+            String(project.id)
+          );
+
+          const status = getProjectStatus(
+            project,
+            isPublished
+          );
+
+          counts[status.type]++;
+
+          const progress = Math.max(
+            0,
+            Math.min(
+              100,
+              Number(project.progress_percentage ?? 0)
+            )
+          );
+
+          const article = document.createElement("article");
+          article.className = "project " + status.type;
+
+          const title = document.createElement("h3");
+          title.textContent =
+            project.name || "Proyecto sin nombre";
+
+          const badge = document.createElement("span");
+          badge.className = "status";
+          badge.textContent = status.label;
+
+          const description = document.createElement("p");
+          description.className = "muted";
+          description.textContent =
+            project.description || "Sin descripción";
+
+          const due = document.createElement("p");
+          due.textContent =
+            "Entrega: " + (project.due_date || "Sin fecha");
+
+          const progressText = document.createElement("p");
+          progressText.textContent = "Avance: " + progress + "%";
+
+          const progressBar = document.createElement("div");
+          progressBar.className = "progress";
+
+          const progressFill = document.createElement("div");
+          progressFill.style.width = progress + "%";
+
+          progressBar.appendChild(progressFill);
+
+          article.append(
+            title,
+            badge,
+            description,
+            due,
+            progressText,
+            progressBar
+          );
+
+          $("projectList").appendChild(article);
+        }
+
+        updateCounts(counts);
+      } catch (error) {
+        console.error("Error al cargar proyectos:", error);
+        $("projectMessage").textContent =
+          "Error al consultar proyectos: " + error.message;
+      }
+    }
+
+    function updateCounts(counts) {
+      $("overdueProjects").textContent = counts.red;
+      $("warningProjects").textContent = counts.yellow;
+      $("onTrackProjects").textContent = counts.green;
+    }
+
+    $("refreshBtn").addEventListener("click", loadProjects);
+
+    // 10. Navegación entre módulos.
+    
+    // 10. Mostrar tablas de los módulos.
+
+    // Crear una tabla HTML a partir de los registros recibidos.
+    function renderModuleTable(data, columns) {
+      const table = document.createElement("table");
+      table.style.width = "100%";
+      table.style.borderCollapse = "collapse";
+      table.style.marginTop = "16px";
+
+      const thead = document.createElement("thead");
+      const headerRow = document.createElement("tr");
+
+      columns.forEach(column => {
+        const th = document.createElement("th");
+        th.textContent = column.label;
+        th.style.textAlign = "left";
+        th.style.padding = "12px";
+        th.style.borderBottom = "2px solid #e3e7ef";
+        headerRow.appendChild(th);
+      });
+
+      thead.appendChild(headerRow);
+      table.appendChild(thead);
+
+      const tbody = document.createElement("tbody");
+
+      data.forEach(record => {
+        const row = document.createElement("tr");
+
+        columns.forEach(column => {
+          const td = document.createElement("td");
+          const value = record[column.key];
+
+          td.textContent = value == null
+            ? "—"
+            : typeof value === "object"
+              ? JSON.stringify(value)
+              : String(value);
+
+          td.style.padding = "12px";
+          td.style.borderBottom = "1px solid #e3e7ef";
+          td.style.verticalAlign = "top";
+          row.appendChild(td);
+        });
+
+        tbody.appendChild(row);
+      });
+
+      table.appendChild(tbody);
+
+      const wrapper = document.createElement("div");
+      wrapper.style.overflowX = "auto";
+      wrapper.appendChild(table);
+      $("moduleContent").appendChild(wrapper);
+    }
+
+    // Cargar maquinaria con sus columnas principales.
+    async function loadMachinery() {
+      const message = $("moduleMessage");
+      const content = $("moduleContent");
+
+      message.textContent = "Cargando maquinaria...";
+      content.replaceChildren();
+
+      try {
+        const { data, error } = await db
+          .from("machinery")
+          .select("*")
+          .order("machinery_code", { ascending: true });
+
+        if (error) throw error;
+
+        if (!data || data.length === 0) {
+          message.textContent = "No hay maquinaria registrada.";
+          return;
+        }
+
+        message.textContent =
+          "Registros encontrados: " + data.length;
+
+        renderModuleTable(data, [
+          { key: "machinery_code", label: "Código" },
+          { key: "name", label: "Maquinaria" },
+          { key: "category", label: "Categoría" },
+          { key: "brand", label: "Marca" }
+        ]);
+      } catch (error) {
+        console.error("Error al cargar maquinaria:", error);
+        message.textContent =
+          "No se pudo cargar la maquinaria: " + error.message;
+      }
+    }
+
+    // Cargar Planos, Materiales, Transporte y Empleados.
+    async function loadGenericModule(page) {
+      const message = $("moduleMessage");
+      const content = $("moduleContent");
+
+      const tableNames = {
+        drawings: "drawings",
+        materials: "materials",
+        transport: "transport",
+        employees: "employees"
+      };
+
+      const tableName = tableNames[page];
+
+      if (!tableName) {
+        message.textContent = "Módulo no configurado.";
+        return;
+      }
+
+      message.textContent = "Cargando registros...";
+      content.replaceChildren();
+
+      try {
+        const { data, error } = await db
+          .from(tableName)
+          .select("*");
+
+        if (error) throw error;
+
+        if (!data || data.length === 0) {
+          message.textContent =
+            "No hay registros visibles en " + tableName + ".";
+          return;
+        }
+
+        message.textContent =
+          "Registros encontrados: " + data.length;
+
+        // Detectar las columnas automáticamente.
+        const columns = Object.keys(data[0]).map(key => ({
+          key: key,
+          label: key.replaceAll("_", " ")
+        }));
+
+        renderModuleTable(data, columns);
+      } catch (error) {
+        console.error(
+          "Error al cargar la tabla " + tableName + ":",
+          error
+        );
+
+        message.textContent =
+          "Error al consultar " + tableName + ": " +
+          error.message;
+      }
+    }
+
+    // Navegación entre módulos.
+    document.querySelectorAll("[data-page]").forEach(button => {
+      button.addEventListener("click", () => {
+        const page = button.dataset.page;
+
+        document.querySelectorAll("[data-page]").forEach(item => {
+          item.classList.toggle("active", item === button);
+        });
+
+        const isProjects = page === "projects";
+
+        $("projectsPage").hidden = !isProjects;
+        $("otherPage").hidden = isProjects;
+
+        if (!isProjects) {
+          $("otherTitle").textContent = moduleInfo[page].title;
+          $("otherDescription").textContent =
+            moduleInfo[page].description;
+
+          $("moduleMessage").textContent = "";
+          $("moduleContent").replaceChildren();
+
+          if (page === "machinery") {
+            loadMachinery();
+          } else {
+            loadGenericModule(page);
+          }
+        }
+      });
+    });
+
+    
+   
+     
+
+    // 11. Restaurar una sesión guardada al abrir la página.
+    async function initialize() {
+      showLogin();
+
+      const { data, error } = await db.auth.getSession();
+
+      if (error) {
+        showLogin(
+          "No se pudo comprobar la sesión: " + error.message
+        );
+        return;
+      }
+
+      if (data.session) {
+        try {
+          await enterApplication(data.session.user);
+        } catch (error) {
+          console.error(
+            "No se pudo restaurar el perfil:",
+            error.message
+          );
+        }
+      }
+    }
+
+    
+    // 12. Diagnóstico de conexión y permisos de Supabase.
+    async function diagnosticarSupabase() {
+      console.group("Diagnóstico de Industrial Manager");
+
+      try {
+        // Comprobar sesión actual.
+        const { data: sessionData, error: sessionError } =
+          await db.auth.getSession();
+
+        if (sessionError) {
+          console.error("Error de sesión:", sessionError);
+        } else {
+          console.log(
+            "Sesión:",
+            sessionData.session
+              ? "Activa (" + sessionData.session.user.email + ")"
+              : "No hay una sesión activa"
+          );
+        }
+
+        // Comprobar acceso de lectura a las tablas.
+        const tablas = [
+          "employees",
+          "projects",
+          "project_updates",
+          "drawings",
+          "materials",
+          "machinery"
+        ];
+
+        for (const tabla of tablas) {
+          console.group("Tabla: " + tabla);
+
+          try {
+            const { data, error, count } = await db
+              .from(tabla)
+              .select("*", { count: "exact" })
+              .limit(1);
+
+            if (error) {
+              console.error("❌ Error al consultar");
+              console.error("Código:", error.code);
+              console.error("Mensaje:", error.message);
+              console.error("Detalles:", error.details);
+              console.error("Sugerencia:", error.hint);
+            } else {
+              console.log("✅ Consulta correcta");
+              console.log("Filas devueltas:", data.length);
+              console.log("Total visible:", count);
+              console.log("Datos de ejemplo:", data);
+            }
+          } catch (error) {
+            console.error("Error inesperado:", error);
+          }
+
+          console.groupEnd();
+        }
+      } catch (error) {
+        console.error("Falló el diagnóstico:", error);
+      }
+
+      console.groupEnd();
+    }
+
+    // Ejecutar el diagnóstico al iniciar la página.
+    initialize();
+
+    // Volver a diagnosticar cuando se inicia o restaura la sesión.
+    db.auth.onAuthStateChange((event, session) => {
+      if (
+        event === "SIGNED_IN" ||
+        event === "INITIAL_SESSION"
+      ) {
+        setTimeout(() => {
+          diagnosticarSupabase();
+        }, 0);
+      }
+    });
+
+  </script>
+</body>
+</html>
+```
