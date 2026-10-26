@@ -162,6 +162,29 @@
 
     [hidden] { display: none !important; }
 
+     .mat-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px 18px; margin-top: 16px; }
+    .mat-form label { display: block; font-weight: bold; font-size: 14px; }
+    .mat-form input, .mat-form select { width: 100%; margin: 6px 0 0; padding: 12px; border: 1px solid #cbd5e1; border-radius: 8px; font: inherit; font-weight: normal; background: white; }
+    .mat-form .full { grid-column: 1 / -1; }
+    .mat-family { padding: 12px; border: 1px solid #cbd5e1; border-radius: 8px; font: inherit; background: white; }
+
+    .mat-table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+    .mat-table th, .mat-table td {
+      padding: 10px; border-bottom: 1px solid var(--border);
+      text-align: left; vertical-align: top; white-space: nowrap;
+    }
+    .avail-pill {
+      border: 0; border-radius: 999px; padding: 8px 14px;
+      font: inherit; font-weight: bold; cursor: pointer;
+    }
+    .avail-pill[data-state="true"]  { background: rgba(22, 163, 74, 0.15); color: #166534; }
+    .avail-pill[data-state="false"] { background: rgba(220, 38, 38, 0.15); color: #991b1b; }
+    .avail-pill[data-state=""]      { background: rgba(100, 116, 139, 0.15); color: #475569; }
+    .avail-pill:disabled { opacity: 0.5; cursor: not-allowed; }
+ 
+    .mat-table th { border-bottom: 2px solid var(--border); }
+    .mat-table input { width: 90px; margin: 0; padding: 8px; }
+    .warn { color: #991b1b; font-weight: bold; }
     @media (max-width: 600px) {
       main { padding: 16px; }
       header { padding: 16px; }
@@ -223,6 +246,7 @@
         <button class="active" data-page="projects">Proyectos</button>
         <button data-page="drawings">Planos</button>
         <button data-page="materials">Materiales</button>
+        <button data-page="movements">Movimientos</button>
         <button data-page="transport">Transporte</button>
         <button data-page="machinery">Maquinaria</button>
         <button data-page="employees">Empleados</button>
@@ -286,6 +310,23 @@
 
     const $ = (id) => document.getElementById(id);
 
+    // Orden alfabético en español (ignora mayúsculas y acentos, entiende números)
+    const collator = new Intl.Collator("es", { numeric: true, sensitivity: "base" });
+ 
+    function sortBy(rows, ...keys) {
+      return [...rows].sort((a, b) => {
+        for (const k of keys) {
+          const x = String(a[k] ?? "").trim();
+          const y = String(b[k] ?? "").trim();
+          if (!x && y) return 1;      // los vacíos van al final
+          if (x && !y) return -1;
+          const c = collator.compare(x, y);
+          if (c !== 0) return c;
+        }
+        return 0;
+      });
+    }
+
     let currentUser = null;
     let currentEmployee = null;
 
@@ -299,6 +340,10 @@
         title: "Materiales para hornos",
         description:
           "Aquí conectaremos materiales, calidad, proveedores, precios y plazos."
+      },
+      movements: {
+        title: "Movimientos",
+        description: "Historial de entradas y salidas de material por obra."
       },
       transport: {
         title: "Transporte",
@@ -539,7 +584,7 @@
 
         $("projectMessage").textContent = "";
 
-        for (const project of projects) {
+        for (const project of sortBy(projects, "name")) {
           const isPublished = publishedProjectIds.has(
             String(project.id)
           );
@@ -664,7 +709,6 @@
           td.style.verticalAlign = "top";
           row.appendChild(td);
         });
-
         tbody.appendChild(row);
       });
 
@@ -677,42 +721,213 @@
     }
 
     // Cargar maquinaria con sus columnas principales.
+   let machineryRows = [];
+ 
+    function machAvailLabel(v) {
+      return v === true ? "Disponible" : v === false ? "No disponible" : "Sin definir";
+    }
+ 
     async function loadMachinery() {
       const message = $("moduleMessage");
       const content = $("moduleContent");
-
+ 
       message.textContent = "Cargando maquinaria...";
       content.replaceChildren();
-
+ 
       try {
         const { data, error } = await db
           .from("machinery")
           .select("*")
           .order("machinery_code", { ascending: true });
-
+ 
         if (error) throw error;
-
+ 
         if (!data || data.length === 0) {
           message.textContent = "No hay maquinaria registrada.";
           return;
         }
-
-        message.textContent =
-          "Registros encontrados: " + data.length;
-
-        renderModuleTable(data, [
-          { key: "machinery_code", label: "Código" },
-          { key: "name", label: "Maquinaria" },
-          { key: "category", label: "Categoría" },
-          { key: "brand", label: "Marca" }
-        ]);
+ 
+        machineryRows = sortBy(data, "name", "machinery_code");
+        message.textContent = "";
+        renderMachinery();
       } catch (error) {
         console.error("Error al cargar maquinaria:", error);
         message.textContent =
           "No se pudo cargar la maquinaria: " + error.message;
       }
     }
-
+ 
+    // Crea el selector de disponibilidad y el campo de ubicación de una máquina.
+    function buildMachineryControls(m) {
+      const sel = document.createElement("select");
+      sel.className = "avail-pill";
+      [["", "Sin definir"], ["true", "Disponible"], ["false", "No disponible"]]
+        .forEach(([v, t]) => {
+          const o = document.createElement("option");
+          o.value = v;
+          o.textContent = t;
+          sel.appendChild(o);
+        });
+ 
+      const loc = document.createElement("input");
+      loc.type = "text";
+      loc.placeholder = "¿Dónde está ahora mismo?";
+      loc.value = m.current_location || "";
+      loc.style.cssText = "margin:0;min-width:220px;";
+ 
+      // Sin ubicación escrita, la disponibilidad queda bloqueada.
+      const paint = () => {
+        sel.value = m.is_available === true ? "true"
+                  : m.is_available === false ? "false" : "";
+        sel.dataset.state = sel.value;
+        sel.disabled = !loc.value.trim();
+        sel.title = sel.disabled ? "Escribe primero dónde está la máquina" : "";
+      };
+ 
+      loc.addEventListener("input", paint);
+ 
+      // Guardar la ubicación al salir del campo (o pulsar Enter)
+      loc.addEventListener("change", async () => {
+        const place = loc.value.trim();
+        if (!place) { paint(); return; }                 // no se guarda vacía
+        if (place === (m.current_location || "")) return;
+ 
+        loc.disabled = true;
+        const { error } = await db.from("machinery")
+          .update({ current_location: place }).eq("id", m.id);
+        loc.disabled = false;
+ 
+        if (error) {
+          alert("No se pudo guardar la ubicación: " + error.message);
+          loc.value = m.current_location || "";
+        } else {
+          m.current_location = place;
+        }
+        paint();
+      });
+ 
+      // Guardar disponibilidad + ubicación actual en un solo movimiento
+      sel.addEventListener("change", async () => {
+        const place = loc.value.trim();
+        if (!place) { paint(); return; }
+ 
+        const value = sel.value === "" ? null : sel.value === "true";
+        sel.disabled = true;
+ 
+        const { error } = await db.from("machinery")
+          .update({ is_available: value, current_location: place })
+          .eq("id", m.id);
+ 
+        if (error) {
+          alert("No se pudo guardar la disponibilidad: " + error.message);
+        } else {
+          m.is_available = value;
+          m.current_location = place;
+        }
+        paint();
+      });
+ 
+      paint();
+      return [sel, loc];
+    }
+ 
+    // Dibuja el buscador y la tabla de maquinaria.
+    function renderMachinery() {
+      const content = $("moduleContent");
+      content.replaceChildren();
+ 
+      const search = document.createElement("input");
+      search.type = "search";
+      search.placeholder = "Filtrar por código, nombre, categoría, marca, ubicación...";
+      search.style.cssText = "max-width:460px;margin:0 0 8px;";
+ 
+      const count = document.createElement("p");
+      count.className = "muted";
+ 
+      const holder = document.createElement("div");
+      content.append(search, count, holder);
+ 
+      const draw = () => {
+        const terms = foldTxt(search.value).split(/\s+/).filter(Boolean);
+ 
+        const shown = machineryRows.filter(m => {
+          const hay = foldTxt([
+            m.machinery_code, m.name, m.category, m.brand,
+            m.current_location, machAvailLabel(m.is_available)
+          ].join(" "));
+          return terms.every(t => hay.includes(t));
+        });
+ 
+        count.textContent = "Mostrando " + shown.length + " de " + machineryRows.length;
+        holder.replaceChildren();
+ 
+        if (shown.length === 0) {
+          holder.textContent = "Ninguna máquina coincide con el filtro.";
+          return;
+        }
+ 
+        holder.appendChild(makeTable(
+          ["Código", "Maquinaria", "Categoría", "Marca", "Disponible", "Ubicación actual"],
+          shown.map(m => {
+            const [sel, loc] = buildMachineryControls(m);
+            return [m.machinery_code, m.name, m.category, m.brand, sel, loc];
+          })
+        ));
+      };
+ 
+      search.addEventListener("input", draw);
+      draw();
+    }
+ 
+     async function loadMovements() {
+      const message = $("moduleMessage");
+      const content = $("moduleContent");
+      
+      message.textContent = "Cargando movimientos...";
+      content.replaceChildren();
+ 
+      try {
+        const { data, error } = await db
+          .from("stock_movements")
+          .select("*")
+          .order("moved_at", { ascending: false });
+ 
+        if (error) throw error;
+ 
+        if (!data || data.length === 0) {
+          message.textContent = "Aún no hay movimientos registrados.";
+          return;
+        }
+ 
+        message.textContent = "Registros encontrados: " + data.length;
+ 
+        const rows = data.map(m => {
+          const isOut = m.direction === "SALIDA";
+          const qty = document.createElement("span");
+          qty.textContent = (isOut ? "-" : "+") + m.quantity + (m.unit ? " " + m.unit : "");
+          qty.style.fontWeight = "bold";
+          qty.style.color = isOut ? "#b91c1c" : "#166534";
+ 
+          return [
+            new Date(m.moved_at).toLocaleString("es-ES"),
+            m.pr_code,
+            m.description,
+            qty,
+            m.lot,
+            m.comment
+          ];
+        });
+        
+        content.appendChild(makeTable(
+          ["Fecha", "Producto", "Descripción", "Entrada / Salida", "Lote", "Comentario (obra)"],
+          rows
+        ));
+      } catch (error) {
+        console.error("Error al cargar movimientos:", error);
+        message.textContent = "No se pudieron cargar los movimientos: " + error.message;
+      }
+    }
+    
     // Cargar Planos, Materiales, Transporte y Empleados.
     async function loadGenericModule(page) {
       const message = $("moduleMessage");
@@ -757,7 +972,10 @@
           label: key.replaceAll("_", " ")
         }));
 
-        renderModuleTable(data, columns);
+         // Empleados: por apellido y nombre. Otras tablas: por nombre o título.
+        const prefer = [["last_name", "first_name"], ["name"], ["company_name"], ["title"]];
+        const sortKeys = prefer.find(ks => ks.every(k => k in data[0])) || [];
+        renderModuleTable(sortKeys.length ? sortBy(data, ...sortKeys) : data, columns);
       } catch (error) {
         console.error(
           "Error al cargar la tabla " + tableName + ":",
@@ -769,6 +987,169 @@
           error.message;
       }
     }
+
+const DRAW_EXT = ["pdf", "dwg", "dxf", "png", "jpg", "jpeg", "xlsx", "docx"];
+    const DRAW_MAX = 50 * 1024 * 1024;   // 50 MB
+ 
+    const fmtSize = b =>
+      b >= 1048576 ? (b / 1048576).toFixed(1) + " MB"
+                   : Math.max(1, Math.round(b / 1024)) + " KB";
+ 
+    async function loadDrawings() {
+      const content = $("moduleContent");
+      $("moduleMessage").textContent = "";
+      content.replaceChildren();
+ 
+      // ----- Formulario de subida -----
+      const form = document.createElement("form");
+      form.className = "mat-form";
+ 
+      const field = (label, el, required) => {
+        const l = document.createElement("label");
+        l.textContent = label + (required ? " *" : "");
+        el.required = !!required;
+        l.appendChild(el);
+        form.appendChild(l);
+        return el;
+      };
+ 
+      const titleIn = field("Título del plano",
+        Object.assign(document.createElement("input"), { type: "text" }), true);
+      const descIn = field("Descripción",
+        Object.assign(document.createElement("input"), { type: "text" }));
+      const fileIn = field("Archivo",
+        Object.assign(document.createElement("input"), {
+          type: "file", accept: "." + DRAW_EXT.join(",.")
+        }), true);
+ 
+      const btn = document.createElement("button");
+      btn.type = "submit";
+      btn.textContent = "Subir plano";
+      const status = document.createElement("p");
+      status.setAttribute("role", "status");
+      const foot = document.createElement("div");
+      foot.className = "full";
+      foot.append(btn, status);
+      form.appendChild(foot);
+ 
+      const heading = document.createElement("h3");
+      heading.textContent = "Planos guardados";
+      heading.style.marginTop = "28px";
+      const list = document.createElement("div");
+ 
+      content.append(form, heading, list);
+ 
+      // ----- Lista de planos -----
+      async function refresh() {
+        list.textContent = "Cargando planos...";
+        const { data, error } = await db
+          .from("drawing_files")
+          .select("*")
+          .order("uploaded_at", { ascending: false });
+ 
+        if (error) {
+          list.textContent = "No se pudieron cargar los planos: " + error.message;
+          return;
+        }
+        if (!data || data.length === 0) {
+          list.textContent = "Aún no hay planos subidos.";
+          return;
+        }
+ 
+        list.replaceChildren(makeTable(
+          ["Título", "Descripción", "Archivo", "Tamaño", "Subido", ""],
+          sortBy(data, "title").map(d => {
+            const open = document.createElement("button");
+            open.type = "button";
+            open.textContent = "Abrir";
+            open.addEventListener("click", async () => {
+              // Se abre la pestaña antes del await para que no la bloquee el navegador
+              const w = window.open("about:blank", "_blank");
+              const { data: signed, error: err } = await db.storage
+                .from("planos").createSignedUrl(d.file_path, 120);
+              if (err) {
+                if (w) w.close();
+                alert("No se pudo abrir el archivo: " + err.message);
+                return;
+              }
+              if (w) w.location.href = signed.signedUrl;
+              else window.open(signed.signedUrl, "_blank");
+            });
+ 
+            return [
+              d.title, d.description, d.file_name,
+              d.size_bytes ? fmtSize(d.size_bytes) : "—",
+              new Date(d.uploaded_at).toLocaleString("es-ES"),
+              open
+            ];
+          })
+        ));
+      }
+ 
+      // ----- Subir archivo -----
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        status.style.color = "#b91c1c";
+        status.textContent = "";
+ 
+        const file = fileIn.files[0];
+        if (!file) return;
+ 
+        const ext = (file.name.split(".").pop() || "").toLowerCase();
+        if (!DRAW_EXT.includes(ext)) {
+          status.textContent = "Formato no permitido. Usa: " + DRAW_EXT.join(", ") + ".";
+          return;
+        }
+        if (file.size > DRAW_MAX) {
+          status.textContent = "El archivo supera los 50 MB.";
+          return;
+        }
+ 
+        btn.disabled = true;
+        status.style.color = "#667085";
+        status.textContent = "Subiendo...";
+ 
+        // Nombre interno único: evita choques y caracteres raros. El nombre original se guarda aparte.
+        const path = crypto.randomUUID() + "." + ext;
+ 
+        try {
+          const up = await db.storage.from("planos").upload(path, file, {
+            contentType: file.type || "application/octet-stream",
+            upsert: false
+          });
+          if (up.error) throw up.error;
+ 
+          const ins = await db.from("drawing_files").insert({
+            title: titleIn.value.trim(),
+            description: descIn.value.trim() || null,
+            file_path: path,
+            file_name: file.name,
+            mime_type: file.type || null,
+            size_bytes: file.size
+          });
+ 
+          if (ins.error) {
+            // Si falla el registro, se borra el archivo para no dejar huérfanos
+            await db.storage.from("planos").remove([path]);
+            throw ins.error;
+          }
+ 
+          status.style.color = "#166534";
+          status.textContent = "Plano subido correctamente.";
+          form.reset();
+          await refresh();
+        } catch (error) {
+          console.error("Error al subir el plano:", error);
+          status.style.color = "#b91c1c";
+          status.textContent = "No se pudo subir: " + error.message;
+        } finally {
+          btn.disabled = false;
+        }
+      });
+ 
+      await refresh();
+    }
+ 
 
     // Navegación entre módulos.
     document.querySelectorAll("[data-page]").forEach(button => {
@@ -792,8 +1173,14 @@
           $("moduleMessage").textContent = "";
           $("moduleContent").replaceChildren();
 
-          if (page === "machinery") {
+           if (page === "machinery") {
             loadMachinery();
+           } else if (page === "materials") {
+            loadMaterials();
+          } else if (page === "movements") {
+            loadMovements();
+          } else if (page === "drawings") {
+            loadDrawings();
           } else {
             loadGenericModule(page);
           }
@@ -804,7 +1191,508 @@
     
    
      
+// ---------- MATERIALES: subpestañas ----------
+    const MAT = {
+      hormigon: {
+        label: "Hormigón", table: "mat_hormigon",
+        name: r => r.name, avail: r => r.available,
+        cols: [["warehouse","Almacén"],["pr_code","Código PR"],["name","Nombre"],
+          ["type","Tipo"],["manufacturer","Fabricante"],
+          ["manufacture_date","Fecha fabricación"],["age_months","Antigüedad (meses)"],
+          ["status","Estatus"],["quantity","Cantidad"],["available","Disponible"],
+          ["location","Ubicación"]]
+      },
+      ceramic: {
+        label: "Fibras cerámicas", table: "mat_ceramic_fibers",
+        name: r => r.material, avail: r => r.available,
+        cols: [["warehouse","Almacén"],["pr_code","Código PR"],["material","Material"],
+          ["type","Tipo"],["manufacturer","Fabricante"],["quality","Calidad"],
+          ["class_temp_c","Temp. clasif. (ºC)"],["density","Densidad"],
+          ["dimensions_mm","Dimensiones (mm)"],["quantity","Cantidad"],["unit","Ud"],
+          ["reserved","Reservados"],["available","Disponibles"]]
+      },
+      metal: {
+        label: "Fibras metálicas", table: "mat_metal_fibers",
+        name: r => r.material, avail: r => r.available,
+        cols: [["warehouse","Almacén"],["pr_code","Código PR"],["material","Material"],
+          ["type","Tipo"],["steel_grade","Calidad de acero"],["diameter_mm","Diámetro (mm)"],
+          ["length_mm","Longitud (mm)"],["quantity","Cantidad"],["unit","Unidades"],
+          ["available","Disponibles"]]
+      },
+      bricks: {
+        label: "Ladrillos y piezas", table: "mat_bricks",
+        name: r => r.material, avail: r => r.available,
+        cols: [["warehouse","Almacén"],["pr_code","Código PR"],["material","Material"],
+          ["type","Tipo"],["shape","Forma"],["quality","Calidad"],
+          ["dimensions_mm","Dimensiones (mm)"],["quantity","Cantidad"],
+          ["available","Disponibles"]]
+      },
+      anchors: {
+        label: "Anclajes", table: "mat_anchors",
+        name: r => r.description, avail: r => r.available,
+        cols: [["warehouse","Almacén"],["pr_code","Código PR"],["description","Descripción"],
+          ["type","Tipo"],["shape","Forma"],["fixing","Fijación"],
+          ["steel_grade","Calidad de acero"],["thread_metric","Métrica"],
+          ["rod_diameter_mm","Ø varilla (mm)"],["other_measures","Otras medidas"],
+          ["quantity","Cantidad"],["available","Disponibles"]]
+      }
+    };
+ 
+    // Selección del usuario: clave "familia:id" -> {family, code, name, qty, unit}
+    const matSel = new Map();
+ 
+    function monthsSince(dateStr) {
+      if (!dateStr) return null;
+      const a = new Date(dateStr + "T00:00:00"), n = new Date();
+      return (n.getFullYear() - a.getFullYear()) * 12 +
+             (n.getMonth() - a.getMonth()) - (n.getDate() < a.getDate() ? 1 : 0);
+    }
+ 
+    // Tabla genérica: cada celda puede ser texto o un nodo (por ejemplo un input).
+    function makeTable(headers, rows) {
+      const table = document.createElement("table");
+      table.className = "mat-table";
+      const hr = document.createElement("tr");
+      headers.forEach(h => {
+        const th = document.createElement("th");
+        th.textContent = h;
+        hr.appendChild(th);
+      });
+      const thead = document.createElement("thead");
+      thead.appendChild(hr);
+      const tbody = document.createElement("tbody");
+      rows.forEach(cells => {
+        const tr = document.createElement("tr");
+        cells.forEach(v => {
+          const td = document.createElement("td");
+          if (v instanceof Node) td.appendChild(v);
+          else td.textContent = v == null ? "—" : String(v);
+          tr.appendChild(td);
+        });
+        tbody.appendChild(tr);
+      });
+      table.append(thead, tbody);
+      const wrap = document.createElement("div");
+      wrap.style.overflowX = "auto";
+      wrap.appendChild(table);
+      return wrap;
+    }
+ 
+    // Texto de búsqueda recordado por subpestaña
+    const matSearch = {};
+ 
+    // Minúsculas y sin acentos: "Hormigon" encuentra "Hormigón"
+    const foldTxt = s => String(s ?? "")
+      .normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+ 
+    function renderMatTable(key) {
+      const f = MAT[key], body = $("matBody");
+      body.replaceChildren();
+ 
+      if (!f.rows.length) {
+        body.textContent = "No hay registros en " + f.table + ".";
+        return;
+      }
+ 
+      // Construye una fila (celdas + campo "Cantidad a usar")
+      const buildRow = (r) => {
+        const id = key + ":" + r.id;
+        const cells = f.cols.map(([k]) => {
+          if (k === "status" && r.status === "REVISAR") {
+            const s = document.createElement("span");
+            s.className = "warn";
+            s.textContent = "REVISAR";
+            return s;
+          }
+          return r[k];
+        });
+ 
+        const inp = document.createElement("input");
+        inp.type = "number";
+        inp.min = "0";
+        inp.max = String(f.avail(r) ?? 0);
+        inp.step = "any";
+        inp.value = matSel.has(id) ? matSel.get(id).qty : "";
+        inp.addEventListener("input", () => {
+          let v = Number(inp.value);
+          if (!(v > 0)) { matSel.delete(id); return; }
+          const max = Number(f.avail(r)) || 0;
+          if (v > max) { v = max; inp.value = max; }   // no pasar de lo disponible
+          if (v === 0) { matSel.delete(id); return; }
+          matSel.set(id, {
+            family: key, id: r.id, code: r.pr_code, name: f.name(r),
+            qty: v, unit: r.unit || "ud", lot: matSel.get(id)?.lot || ""
+          });
+        });
+        cells.push(inp);
+        return cells;
+      };
+ 
+      // Buscador (se crea una sola vez para no perder el foco al escribir)
+      const search = document.createElement("input");
+      search.type = "search";
+      search.placeholder = "Filtrar por código, nombre, tipo, fabricante...";
+      search.value = matSearch[key] || "";
+      search.style.cssText = "max-width:420px;margin:0 0 8px;";
+ 
+      const count = document.createElement("p");
+      count.className = "muted";
+ 
+      const holder = document.createElement("div");
+      body.append(search, count, holder);
+ 
+      const headers = [...f.cols.map(c => c[1]), "Cantidad a usar"];
+ 
+      // Filtra: todas las palabras escritas deben aparecer en alguna columna
+      const draw = () => {
+        const terms = foldTxt(search.value).split(/\s+/).filter(Boolean);
+        const shown = f.rows.filter(r => {
+          const hay = foldTxt(f.cols.map(([k]) => r[k]).join(" "));
+          return terms.every(t => hay.includes(t));
+        });
+ 
+        count.textContent = "Mostrando " + shown.length + " de " + f.rows.length;
+        holder.replaceChildren();
+ 
+        if (shown.length === 0) {
+          holder.textContent = "Ningún material coincide con el filtro.";
+          return;
+        }
+        holder.appendChild(makeTable(headers, shown.map(buildRow)));
+      };
+ 
+      search.addEventListener("input", () => {
+        matSearch[key] = search.value;
+        draw();
+      });
+ 
+      draw();
+    }
+ 
+      function renderMatSummary() {
+      const body = $("matBody");
+      body.replaceChildren();
+      if (matSel.size === 0) {
+        body.textContent = "Aún no has seleccionado ningún material.";
+        return;
+      }
+      const items = [...matSel.values()].sort((a, b) =>
+        collator.compare(MAT[a.family].label, MAT[b.family].label) ||
+        collator.compare(String(a.name ?? ""), String(b.name ?? "")));
+ 
+      const h1 = document.createElement("h3");
+      h1.textContent = "Materiales seleccionados";
+      body.appendChild(h1);
+      body.appendChild(makeTable(
+        ["Familia", "Código PR", "Material", "Cantidad", "Ud", "Lote"],
+        items.map(i => {
+          const lot = document.createElement("input");
+          lot.type = "text";
+          lot.placeholder = "Lote ";
+          lot.style.width = "160px";
+          lot.value = i.lot || "";
+          lot.addEventListener("input", () => { i.lot = lot.value; });
+          return [MAT[i.family].label, i.code, i.name, i.qty, i.unit, lot];
+        })
+      ));
+ 
+      const totals = {};
+      items.forEach(i => {
+        const t = totals[i.family] ||= { lines: 0, qty: 0, units: new Set() };
+        t.lines++; t.qty += i.qty; t.units.add(i.unit);
+      });
+ 
+      const h2 = document.createElement("h3");
+      h2.textContent = "Total por familia";
+      h2.style.marginTop = "28px";
+      body.appendChild(h2);
+      body.appendChild(makeTable(
+        ["Familia", "Materiales distintos", "Cantidad total", "Ud"],
+        Object.entries(totals)
+          .sort((a, b) => collator.compare(MAT[a[0]].label, MAT[b[0]].label))
+          .map(([k, t]) =>
+          [MAT[k].label, t.lines, t.qty, [...t.units].join(" / ")])
+      ));
+ 
+      // ----- Obra de destino + botón Guardar (abajo a la derecha, verde) -----
+      const obra = document.createElement("input");
+      obra.type = "text";
+      obra.placeholder = "Obra de destino *";
+      obra.style.cssText = "margin:0;max-width:340px;";
+ 
+      const save = document.createElement("button");
+      save.type = "button";
+      save.textContent = "Guardar";
+      save.style.background = "#16a34a";
+ 
+      const bar = document.createElement("div");
+      bar.style.cssText =
+        "display:flex;justify-content:flex-end;align-items:center;" +
+        "gap:12px;flex-wrap:wrap;margin-top:28px;";
+      bar.append(obra, save);
+ 
+      const msg = document.createElement("p");
+      msg.setAttribute("role", "status");
+      msg.style.textAlign = "right";
+ 
+      save.addEventListener("click", async () => {
+        const destino = obra.value.trim();
+        if (!destino) {
+          msg.style.color = "#b91c1c";
+          msg.textContent = "Escribe la obra a la que irá el material.";
+          obra.focus();
+          return;
+        }
+ 
+        save.disabled = true;
+        msg.style.color = "#667085";
+        msg.textContent = "Guardando...";
+ 
+        try {
+          const payload = items.map(i => ({
+            family: i.family, id: i.id, qty: i.qty, lot: i.lot || null
+          }));
+ 
+          const { error } = await db.rpc("reserve_materials", {
+            p_obra: destino,
+            p_items: payload
+          });
+          if (error) throw error;
+ 
+          matSel.clear();
+          await loadMaterials();   // recarga las cantidades ya restadas
+          $("moduleMessage").textContent =
+            "✅ Movimientos guardados para la obra: " + destino;
+        } catch (error) {
+          console.error("Error al guardar movimientos:", error);
+          msg.style.color = "#b91c1c";
+          msg.textContent = "No se guardó nada: " + error.message;
+          save.disabled = false;
+        }
+      });
+ 
+      body.append(bar, msg);
+    }
+     // Campos del formulario: [columna, etiqueta, tipo, obligatorio]
+    const T = "text", N = "number", D = "date";
+    const MAT_FORM = {
+      hormigon: { nameKey: "name", fields: [
+        ["warehouse","Almacén",T,1], ["pr_code","Código PR",T,1], ["name","Nombre",T,1],
+        ["type","Tipo",T], ["manufacturer","Fabricante",T],
+        ["manufacture_date","Fecha de fabricación",D], ["status","Estatus","select"],
+        ["quantity","Cantidad",N,1], ["available","Disponible",N],
+        ["location","Ubicación en el almacén",T]] },
+      ceramic: { nameKey: "material", fields: [
+        ["warehouse","Almacén",T,1], ["pr_code","Código PR",T,1], ["material","Material",T,1],
+        ["type","Tipo",T], ["manufacturer","Fabricante",T], ["quality","Calidad",T],
+        ["class_temp_c","Temperatura clasif. (ºC)",N], ["density","Densidad",N],
+        ["dimensions_mm","Dimensiones (mm)",T], ["quantity","Cantidad",N,1],
+        ["unit","Ud",T], ["reserved","Reservados",N]] },
+      metal: { nameKey: "material", fields: [
+        ["warehouse","Almacén",T,1], ["pr_code","Código PR",T,1], ["material","Material",T,1],
+        ["type","Tipo",T], ["steel_grade","Calidad de acero",T],
+        ["diameter_mm","Diámetro (mm)",N], ["length_mm","Longitud (mm)",N],
+        ["quantity","Cantidad",N,1], ["unit","Unidades",T], ["available","Disponibles",N]] },
+      bricks: { nameKey: "material", fields: [
+        ["warehouse","Almacén",T,1], ["pr_code","Código PR",T,1], ["material","Material",T,1],
+        ["type","Tipo",T], ["shape","Forma",T], ["quality","Calidad",T],
+        ["dimensions_mm","Dimensiones (mm)",T], ["quantity","Cantidad",N,1],
+        ["available","Disponibles",N]] },
+      anchors: { nameKey: "description", fields: [
+        ["warehouse","Almacén",T,1], ["pr_code","Código PR",T,1], ["description","Descripción",T,1],
+        ["type","Tipo",T], ["shape","Forma",T], ["fixing","Fijación",T],
+        ["steel_grade","Calidad de acero",T], ["thread_metric","Métrica",T],
+        ["rod_diameter_mm","Diámetro de varilla (mm)",N], ["other_measures","Otras medidas",T],
+        ["quantity","Cantidad",N,1], ["available","Disponibles",N]] }
+    };
+ 
+    // Calcula los campos derivados de una fila (se usa al cargar y al agregar).
+    function prepMatRow(key, r) {
+      return {
+        ...r,
+        age_months: monthsSince(r.manufacture_date),
+        ...(key === "ceramic"
+          ? { available: (Number(r.quantity) || 0) - (Number(r.reserved) || 0) }
+          : {})
+      };
+    }
+ 
+    const normTxt = s => String(s ?? "").trim().toLowerCase();
+ 
+    function renderMatForm(family = "hormigon") {
+      const body = $("matBody");
+      body.replaceChildren();
+ 
+      const title = document.createElement("h3");
+      title.textContent = "Agregar material";
+ 
+      const sel = document.createElement("select");
+      sel.className = "mat-family";
+      Object.entries(MAT).forEach(([k, f]) => {
+        const o = document.createElement("option");
+        o.value = k; o.textContent = f.label;
+        sel.appendChild(o);
+      });
+      sel.value = family;
+      sel.addEventListener("change", () => renderMatForm(sel.value));
+ 
+      const cfg = MAT_FORM[family], fam = MAT[family];
+      const form = document.createElement("form");
+      form.className = "mat-form";
+      const inputs = {};
+ 
+      cfg.fields.forEach(([key, label, type, required]) => {
+        const lab = document.createElement("label");
+        lab.textContent = label + (required ? " *" : "");
+        let el;
+        if (type === "select") {
+          el = document.createElement("select");
+          ["OK", "REVISAR"].forEach(v => {
+            const o = document.createElement("option");
+            o.value = o.textContent = v;
+            el.appendChild(o);
+          });
+        } else {
+          el = document.createElement("input");
+          el.type = type;
+          if (type === "number") { el.min = "0"; el.step = "any"; }
+        }
+        el.required = !!required;
+        inputs[key] = el;
+        lab.appendChild(el);
+        form.appendChild(lab);
+      });
+ 
+      const btn = document.createElement("button");
+      btn.type = "submit";
+      btn.textContent = "Guardar material";
+      const msg = document.createElement("p");
+      msg.setAttribute("role", "status");
+      msg.className = "full";
+      const foot = document.createElement("div");
+      foot.className = "full";
+      foot.append(btn, msg);
+      form.appendChild(foot);
+ 
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        btn.disabled = true;
+        msg.style.color = "#b91c1c";
+        msg.textContent = "";
+ 
+        try {
+          // Armar la fila (vacío => null)
+          const row = {};
+          cfg.fields.forEach(([key, , type]) => {
+            const v = inputs[key].value.trim();
+            row[key] = v === "" ? null : (type === "number" ? Number(v) : v);
+          });
+ 
+          // Obligatorios (evita textos con solo espacios)
+          cfg.fields.forEach(([key, label, , required]) => {
+            if (required && row[key] == null) throw new Error("Falta el campo: " + label);
+          });
+ 
+          // Valores razonables
+          if ("available" in row && row.available == null) row.available = row.quantity;
+          if ("available" in row && row.available > row.quantity) {
+            throw new Error("Lo disponible no puede ser mayor que la cantidad.");
+          }
+          if ("reserved" in row && row.reserved == null) row.reserved = 0;
+          if ("reserved" in row && row.reserved > row.quantity) {
+            throw new Error("Los reservados no pueden ser mayores que la cantidad.");
+          }
+ 
+          // Duplicados: aviso amable antes de enviar
+          for (const [k, f] of Object.entries(MAT)) {
+            if (f.rows.some(r => normTxt(r.pr_code) === normTxt(row.pr_code))) {
+              throw new Error("El código PR \"" + row.pr_code + "\" ya existe en " + f.label + ".");
+            }
+          }
+          if (fam.rows.some(r => normTxt(r[cfg.nameKey]) === normTxt(row[cfg.nameKey]))) {
+            throw new Error("Ya existe un material llamado \"" + row[cfg.nameKey] + "\" en " + fam.label + ".");
+          }
+ 
+          // Guardar en Supabase
+          const { data, error } = await db.from(fam.table).insert(row).select().single();
+ 
+          if (error) {
+            // 23505 = violación de unicidad (la base de datos es la protección final)
+            if (error.code === "23505") {
+              throw new Error("Ese código PR o nombre ya existe en la base de datos.");
+            }
+            throw error;
+          }
+ 
+          fam.rows = sortBy(
+            [...fam.rows, prepMatRow(family, data)],
+            cfg.nameKey, "pr_code"
+          );
+          msg.style.color = "#166534";
+          msg.textContent = "Material guardado correctamente.";
+          form.reset();
+        } catch (error) {
+          console.error("Error al agregar material:", error);
+          msg.textContent = error.message;
+        } finally {
+          btn.disabled = false;
+        }
+      });
+ 
+      body.append(title, sel, form);
+    }
+ 
+      function showMatTab(key) {
+      document.querySelectorAll("#matTabs button").forEach(b =>
+        b.classList.toggle("active", b.dataset.tab === key));
+      if (key === "summary") renderMatSummary();
+      else if (key === "add") renderMatForm();
+      else renderMatTable(key);
+    }
+     if (key === "summary") renderMatSummary();
+      else if (key === "add") renderMatForm();
+      else renderMatTable(key);
 
+     async function loadMaterials() {
+      const content = $("moduleContent");
+      content.replaceChildren();
+      $("moduleMessage").textContent = "Cargando materiales...";
+
+      try {
+        await Promise.all(Object.entries(MAT).map(async ([key, f]) => {
+          const { data, error } = await db.from(f.table).select("*").order("pr_code");
+          if (error) throw new Error(f.table + ": " + error.message);
+         f.rows = sortBy(
+            (data || []).map(r => prepMatRow(key, r)),
+            MAT_FORM[key].nameKey, "pr_code"
+          );
+        }));
+
+        $("moduleMessage").textContent = "";
+
+        const tabs = document.createElement("div");
+        tabs.className = "nav";
+        tabs.id = "matTabs";
+        [...Object.entries(MAT).map(([k, f]) => [k, f.label]),
+          ["summary", "Resumen"], ["add", "➕ Agregar material"]]
+          .forEach(([k, label]) => {
+            const b = document.createElement("button");
+            b.dataset.tab = k;
+            b.textContent = label;
+            b.addEventListener("click", () => showMatTab(k));
+            tabs.appendChild(b);
+          });
+
+        const body = document.createElement("div");
+        body.id = "matBody";
+        content.append(tabs, body);
+        showMatTab("hormigon");
+      } catch (error) {
+        console.error("Error al cargar materiales:", error);
+        $("moduleMessage").textContent =
+          "No se pudieron cargar los materiales: " + error.message;
+      }
+    }
     // 11. Restaurar una sesión guardada al abrir la página.
     async function initialize() {
       showLogin();
