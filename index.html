@@ -166,6 +166,11 @@
     .mat-form label { display: block; font-weight: bold; font-size: 14px; }
     .mat-form input, .mat-form select { width: 100%; margin: 6px 0 0; padding: 12px; border: 1px solid #cbd5e1; border-radius: 8px; font: inherit; font-weight: normal; background: white; }
     .mat-form .full { grid-column: 1 / -1; }
+    .mat-form textarea {
+      width: 100%; margin: 6px 0 0; padding: 12px; min-height: 90px;
+      border: 1px solid #cbd5e1; border-radius: 8px;
+      font: inherit; font-weight: normal; resize: vertical;
+    }
     .mat-family { padding: 12px; border: 1px solid #cbd5e1; border-radius: 8px; font: inherit; background: white; }
 
     .mat-table { width: 100%; border-collapse: collapse; margin-top: 12px; }
@@ -249,7 +254,6 @@
         <button data-page="movements">Movimientos</button>
         <button data-page="transport">Transporte</button>
         <button data-page="machinery">Maquinaria</button>
-        <button data-page="employees">Empleados</button>
       </nav>
 
       <section id="projectsPage">
@@ -276,10 +280,15 @@
         </div>
 
         <div class="card">
-          <div style="display:flex;justify-content:space-between;
+           <div style="display:flex;justify-content:space-between;
                       align-items:center;gap:12px;flex-wrap:wrap">
             <h3>Proyectos actuales</h3>
-            <button id="refreshBtn">Actualizar</button>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+              <button id="newProjectBtn" style="background:#16a34a">➕ Nuevo proyecto</button>
+              <button id="refreshBtn">Actualizar</button>
+            </div>
+          </div>
+          <div id="newProjectBox" hidden></div>
           </div>
 
           <p id="projectMessage" class="muted">Cargando proyectos...</p>
@@ -297,6 +306,7 @@
   </main>
 
   <script>
+    
     // 1. Configuración de Supabase.
     const SUPABASE_URL =
       "https://hyxhrlsutaanulvpycid.supabase.co";
@@ -329,6 +339,7 @@
 
     let currentUser = null;
     let currentEmployee = null;
+    let openProjects = [];
 
     const moduleInfo = {
       drawings: {
@@ -355,11 +366,7 @@
         description:
           "Aquí conectaremos maquinaria, proveedores, alquileres y proyectos."
       },
-      employees: {
-        title: "Empleados",
-        description:
-          "Aquí conectaremos los perfiles y departamentos autorizados."
-      }
+
     };
 
     // 2. Mostrar la pantalla de login.
@@ -641,7 +648,8 @@
             description,
             due,
             progressText,
-            progressBar
+            progressBar,
+            buildProgressControls(project, progress)
           );
 
           $("projectList").appendChild(article);
@@ -655,6 +663,381 @@
       }
     }
 
+ // Fecha de hoy en formato AAAA-MM-DD (hora local)
+    const todayISO = () =>
+      new Date(Date.now() - new Date().getTimezoneOffset() * 60000)
+        .toISOString().slice(0, 10);
+ 
+    function labeled(text, el, required) {
+      const lab = document.createElement("label");
+      lab.textContent = text + (required ? " *" : "");
+      el.required = !!required;
+      lab.appendChild(el);
+      return lab;
+    }
+ 
+    function renderNewProjectForm() {
+      const box = $("newProjectBox");
+      box.replaceChildren();
+ 
+      const form = document.createElement("form");
+      form.className = "mat-form";
+      form.style.cssText =
+        "margin:16px 0 24px;padding:18px;border:1px solid var(--border);" +
+        "border-radius:12px;background:#f8fafc;";
+ 
+      const title = document.createElement("h3");
+      title.className = "full";
+      title.style.margin = "0";
+      title.textContent = "Nuevo proyecto";
+ 
+      const nameIn = Object.assign(document.createElement("input"), { type: "text" });
+      const descIn = Object.assign(document.createElement("input"), { type: "text" });
+      const dueIn = Object.assign(document.createElement("input"), { type: "date", min: todayISO() });
+ 
+      // ----- Fechas importantes (mínimo 2) -----
+      const msTitle = document.createElement("h4");
+      msTitle.className = "full";
+      msTitle.style.margin = "8px 0 0";
+      msTitle.textContent = "Fechas importantes (mínimo 2)";
+ 
+      const msHelp = document.createElement("p");
+      msHelp.className = "full muted";
+      msHelp.style.margin = "0";
+      msHelp.textContent =
+        "En cada fecha indica qué debe estar hecho y qué porcentaje del proyecto " +
+        "debe llevarse completado en ese punto (por ejemplo 30 %, luego 70 %).";
+ 
+      const msBox = document.createElement("div");
+      msBox.className = "full";
+      msBox.style.cssText = "display:grid;gap:12px;";
+ 
+      const rows = [];
+ 
+      function addRow() {
+        const el = document.createElement("div");
+        el.className = "mat-form";
+        el.style.cssText =
+          "margin:0;padding:12px;border:1px solid var(--border);" +
+          "border-radius:10px;background:white;";
+ 
+        const d = Object.assign(document.createElement("input"), { type: "date", min: todayISO() });
+        const t = Object.assign(document.createElement("input"), { type: "text" });
+        const p = Object.assign(document.createElement("input"), {
+          type: "number", min: "1", max: "100", step: "any"
+        });
+ 
+        const rm = document.createElement("button");
+        rm.type = "button";
+        rm.className = "secondary";
+        rm.textContent = "Quitar";
+        rm.style.alignSelf = "end";
+        rm.hidden = rows.length < 2;          // las dos primeras no se pueden quitar
+ 
+        const row = { el, d, t, p };
+        rm.addEventListener("click", () => {
+          if (rows.length <= 2) return;
+          rows.splice(rows.indexOf(row), 1);
+          el.remove();
+        });
+ 
+        el.append(
+          labeled("Fecha", d, true),
+          labeled("¿Qué debe estar hecho en esa fecha?", t, true),
+          labeled("% del proyecto completado en ese punto", p, true),
+          rm
+        );
+        msBox.appendChild(el);
+        rows.push(row);
+      }
+ 
+      addRow();
+      addRow();
+ 
+      const addBtn = document.createElement("button");
+      addBtn.type = "button";
+      addBtn.className = "secondary";
+      addBtn.textContent = "➕ Agregar fecha importante";
+      addBtn.style.justifySelf = "start";
+      addBtn.addEventListener("click", addRow);
+ 
+      // ----- Botones -----
+      const save = document.createElement("button");
+      save.type = "submit";
+      save.textContent = "Crear proyecto";
+      save.style.background = "#16a34a";
+ 
+      const cancel = document.createElement("button");
+      cancel.type = "button";
+      cancel.className = "secondary";
+      cancel.textContent = "Cancelar";
+      cancel.style.marginLeft = "8px";
+      cancel.addEventListener("click", () => { box.hidden = true; });
+ 
+      const status = document.createElement("p");
+      status.setAttribute("role", "status");
+ 
+      const foot = document.createElement("div");
+      foot.className = "full";
+      foot.append(save, cancel, status);
+ 
+      form.append(
+        title,
+        labeled("Nombre del proyecto", nameIn, true),
+        labeled("Descripción", descIn),
+        labeled("Fecha de entrega", dueIn, true),
+        msTitle, msHelp, msBox, addBtn, foot
+      );
+ 
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        status.style.color = "#b91c1c";
+        status.textContent = "";
+ 
+        try {
+          const items = rows.map(r => ({
+            date: r.d.value,
+            task: r.t.value.trim(),
+            percent: Number(r.p.value)
+          }));
+ 
+          if (!nameIn.value.trim()) throw new Error("Escribe el nombre del proyecto.");
+          if (!dueIn.value) throw new Error("Falta la fecha de entrega.");
+          if (items.length < 2) throw new Error("Agrega al menos 2 fechas importantes.");
+ 
+          items.forEach(i => {
+            if (!i.date || !i.task || !(i.percent > 0 && i.percent <= 100)) {
+              throw new Error("Completa la fecha, la tarea y el porcentaje (1 a 100) de cada fecha importante.");
+            }
+            if (i.date < todayISO() || i.date > dueIn.value) {
+              throw new Error("Cada fecha importante debe estar entre hoy y la fecha de entrega.");
+            }
+          });
+ 
+          const sorted = [...items].sort((a, b) => a.date.localeCompare(b.date));
+          for (let i = 1; i < sorted.length; i++) {
+            if (sorted[i].percent <= sorted[i - 1].percent) {
+              throw new Error("Los porcentajes deben ir subiendo a medida que avanzan las fechas.");
+            }
+          }
+ 
+          save.disabled = true;
+          status.style.color = "#667085";
+          status.textContent = "Creando proyecto...";
+ 
+          const { error } = await db.rpc("create_project", {
+            p_name: nameIn.value.trim(),
+            p_description: descIn.value.trim() || null,
+            p_due_date: dueIn.value,
+            p_milestones: items
+          });
+          if (error) throw error;
+ 
+          box.hidden = true;
+          await loadProjects();
+        } catch (error) {
+          console.error("Error al crear proyecto:", error);
+          status.style.color = "#b91c1c";
+          status.textContent = error.message;
+          save.disabled = false;
+        }
+      });
+ 
+      box.appendChild(form);
+    }
+ 
+    $("newProjectBtn").addEventListener("click", () => {
+      const box = $("newProjectBox");
+      if (!box.hidden) { box.hidden = true; return; }
+      renderNewProjectForm();
+      box.hidden = false;
+    });
+
+    // Botones "Actualizar avance" e "Historial" de un proyecto.
+    function buildProgressControls(project, current) {
+      const wrap = document.createElement("div");
+      wrap.style.marginTop = "14px";
+ 
+      const box = document.createElement("div");
+      box.hidden = true;
+      box.style.marginTop = "14px";
+ 
+      const toggle = document.createElement("button");
+      toggle.type = "button";
+      toggle.textContent = "Actualizar avance";
+ 
+      const hist = document.createElement("button");
+      hist.type = "button";
+      hist.textContent = "Historial";
+      hist.className = "secondary";
+      hist.style.marginLeft = "8px";
+ 
+      if (current >= 100) toggle.hidden = true;   // proyecto completado
+ 
+      // ----- Formulario de avance -----
+      function buildForm() {
+        const form = document.createElement("form");
+        form.className = "mat-form";
+ 
+        const remaining = Math.round((100 - current) * 100) / 100;
+ 
+        const l1 = document.createElement("label");
+        l1.textContent = "Avance de esta actualización (%) *";
+        const pct = document.createElement("input");
+        pct.type = "number";
+        pct.min = "0.01";
+        pct.max = String(remaining);
+        pct.step = "any";
+        pct.required = true;
+        l1.appendChild(pct);
+ 
+        const preview = document.createElement("p");
+        preview.className = "muted";
+        preview.style.alignSelf = "end";
+        preview.textContent = "Llevas " + current + "%. Faltan " + remaining + "%.";
+ 
+        const l2 = document.createElement("label");
+        l2.className = "full";
+        l2.textContent = "¿Qué has hecho? ¿Qué tareas realizaste? *";
+        const desc = document.createElement("textarea");
+        desc.required = true;
+        l2.appendChild(desc);
+ 
+        const btn = document.createElement("button");
+        btn.type = "submit";
+        btn.textContent = "Guardar avance";
+        btn.style.background = "#16a34a";
+        const status = document.createElement("p");
+        status.setAttribute("role", "status");
+        const foot = document.createElement("div");
+        foot.className = "full";
+        foot.append(btn, status);
+ 
+        form.append(l1, preview, l2, foot);
+ 
+        // Vista previa de la suma: 50% + 20% => 70%
+        pct.addEventListener("input", () => {
+          const v = Number(pct.value);
+          preview.textContent = v > 0
+            ? "Llevas " + current + "% → quedará en " + (Math.round((current + v) * 100) / 100) + "%"
+            : "Llevas " + current + "%. Faltan " + remaining + "%.";
+        });
+ 
+        form.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          status.style.color = "#b91c1c";
+          status.textContent = "";
+ 
+          const v = Number(pct.value);
+          const text = desc.value.trim();
+ 
+          if (!(v > 0)) { status.textContent = "Escribe cuánto avanzaste."; return; }
+          if (v > remaining) { status.textContent = "Solo faltan " + remaining + "% para llegar al 100%."; return; }
+          if (text.length < 5) { status.textContent = "Describe qué hiciste (mínimo 5 caracteres)."; return; }
+ 
+          btn.disabled = true;
+          status.style.color = "#667085";
+          status.textContent = "Guardando...";
+ 
+          try {
+            const { error } = await db.rpc("add_project_progress", {
+              p_project_id: String(project.id),
+              p_percent: v,
+              p_description: text
+            });
+            if (error) throw error;
+            await loadProjects();       // recarga: la barra ya muestra el nuevo total
+          } catch (error) {
+            console.error("Error al actualizar avance:", error);
+            status.style.color = "#b91c1c";
+            status.textContent = "No se guardó: " + error.message;
+            btn.disabled = false;
+          }
+        });
+ 
+        return form;
+      }
+ 
+      // ----- Historial de actualizaciones -----
+      async function showHistory() {
+        box.hidden = false;
+        box.dataset.view = "hist";
+        box.textContent = "Cargando historial...";
+ 
+        const { data, error } = await db
+          .from("project_progress_log")
+          .select("*")
+          .eq("project_id", String(project.id))
+          .order("created_at", { ascending: false });
+ 
+        if (error) { box.textContent = "No se pudo cargar el historial: " + error.message; return; }
+        if (!data || data.length === 0) { box.textContent = "Aún no hay actualizaciones."; return; }
+ 
+        box.replaceChildren(makeTable(
+          ["Fecha", "Avance", "Resultado", "Qué se hizo"],
+          data.map(h => [
+            new Date(h.created_at).toLocaleString("es-ES"),
+            "+" + h.added_percent + "%",
+            h.previous_percent + "% → " + h.new_percent + "%",
+            h.description
+          ])
+        ));
+      }
+ 
+      toggle.addEventListener("click", () => {
+        if (!box.hidden && box.dataset.view === "form") { box.hidden = true; return; }
+        box.dataset.view = "form";
+        box.replaceChildren(buildForm());
+        box.hidden = false;
+      });
+ 
+      hist.addEventListener("click", () => {
+        if (!box.hidden && box.dataset.view === "hist") { box.hidden = true; return; }
+        showHistory();
+      });
+      
+      
+      const mil = document.createElement("button");
+      mil.type = "button";
+      mil.textContent = "Fechas importantes";
+      mil.className = "secondary";
+      mil.style.marginLeft = "8px";
+ 
+      async function showMilestones() {
+        box.hidden = false;
+        box.dataset.view = "mil";
+        box.textContent = "Cargando fechas importantes...";
+ 
+        const { data, error } = await db
+          .from("project_milestones")
+          .select("*")
+          .eq("project_id", String(project.id))
+          .order("due_date", { ascending: true });
+ 
+        if (error) { box.textContent = "No se pudieron cargar: " + error.message; return; }
+        if (!data || data.length === 0) { box.textContent = "Este proyecto no tiene fechas importantes."; return; }
+ 
+        box.replaceChildren(makeTable(
+          ["Fecha", "Qué debe estar hecho", "% en ese punto", "Estado"],
+          data.map(m => [
+            m.due_date,
+            m.task,
+            m.target_percent + "%",
+            current >= m.target_percent ? "✅ Cumplido"
+              : (m.due_date < todayISO() ? "⚠️ Atrasado" : "Pendiente")
+          ])
+        ));
+      }
+ 
+      mil.addEventListener("click", () => {
+        if (!box.hidden && box.dataset.view === "mil") { box.hidden = true; return; }
+        showMilestones();
+      });
+
+       wrap.append(toggle, hist, mil, box);
+      return wrap;
+    }
+ 
     function updateCounts(counts) {
       $("overdueProjects").textContent = counts.red;
       $("warningProjects").textContent = counts.yellow;
@@ -880,114 +1263,289 @@
     }
  
      async function loadMovements() {
-      const message = $("moduleMessage");
       const content = $("moduleContent");
-      
+      const message = $("moduleMessage");
       message.textContent = "Cargando movimientos...";
       content.replaceChildren();
  
       try {
-        const { data, error } = await db
-          .from("stock_movements")
-          .select("*")
-          .order("moved_at", { ascending: false });
+        await Promise.all([fetchMaterialRows(), fetchOpenProjects()]);
+      } catch (error) {
+        console.error("Error al cargar movimientos:", error);
+        message.textContent = "No se pudo cargar: " + error.message;
+        return;
+      }
+      message.textContent = "";
  
-        if (error) throw error;
+      const tabs = document.createElement("div");
+      tabs.className = "nav";
+      const body = document.createElement("div");
+      content.append(tabs, body);
  
-        if (!data || data.length === 0) {
-          message.textContent = "Aún no hay movimientos registrados.";
-          return;
+      const tabBtns = {};
+      [["list", "Listado"], ["entry", "➕ Registrar entrada"]].forEach(([k, label]) => {
+        const b = document.createElement("button");
+        b.textContent = label;
+        b.addEventListener("click", () => show(k));
+        tabs.appendChild(b);
+        tabBtns[k] = b;
+      });
+ 
+      function show(tab, okText) {
+        Object.entries(tabBtns).forEach(([k, b]) => b.classList.toggle("active", k === tab));
+        body.replaceChildren();
+        if (tab === "entry") {
+          renderEntryForm(body, (text) => show("list", text));
+        } else {
+          renderMovementList(body, okText);
         }
+      }
  
-        message.textContent = "Registros encontrados: " + data.length;
+      show("list");
+    }
  
-        const rows = data.map(m => {
+    async function renderMovementList(body, okText) {
+      const info = document.createElement("p");
+      info.className = "muted";
+      info.textContent = okText || "Cargando movimientos...";
+      if (okText) info.style.color = "#166534";
+      const holder = document.createElement("div");
+      body.append(info, holder);
+ 
+      const { data, error } = await db
+        .from("stock_movements")
+        .select("*")
+        .order("moved_at", { ascending: false });
+ 
+      if (error) { info.textContent = "No se pudieron cargar los movimientos: " + error.message; return; }
+      if (!data || data.length === 0) { info.textContent = "Aún no hay movimientos registrados."; return; }
+      if (!okText) info.textContent = "Registros encontrados: " + data.length;
+ 
+      holder.appendChild(makeTable(
+        ["Fecha", "Producto", "Descripción", "Entrada / Salida", "Lote", "Comentario (obra)", "Responsable"],
+        data.map(m => {
           const isOut = m.direction === "SALIDA";
           const qty = document.createElement("span");
           qty.textContent = (isOut ? "-" : "+") + m.quantity + (m.unit ? " " + m.unit : "");
           qty.style.fontWeight = "bold";
           qty.style.color = isOut ? "#b91c1c" : "#166534";
- 
           return [
             new Date(m.moved_at).toLocaleString("es-ES"),
-            m.pr_code,
-            m.description,
-            qty,
-            m.lot,
-            m.comment
+            m.pr_code, m.description, qty, m.lot, m.comment, m.created_by_name
           ];
+        })
+      ));
+    }
+ 
+    // Etiqueta + campo (texto, número, fecha o lista) para el formulario de entradas
+    function entryField([key, label, type, required], store) {
+      const lab = document.createElement("label");
+      lab.textContent = label + (required ? " *" : "");
+      let el;
+      if (type === "select") {
+        el = document.createElement("select");
+        ["OK", "REVISAR"].forEach(v => {
+          const o = document.createElement("option");
+          o.value = o.textContent = v;
+          el.appendChild(o);
         });
-        
-        content.appendChild(makeTable(
-          ["Fecha", "Producto", "Descripción", "Entrada / Salida", "Lote", "Comentario (obra)"],
-          rows
-        ));
-      } catch (error) {
-        console.error("Error al cargar movimientos:", error);
-        message.textContent = "No se pudieron cargar los movimientos: " + error.message;
+      } else {
+        el = document.createElement("input");
+        el.type = type;
+        if (type === "number") { el.min = "0"; el.step = "any"; }
       }
+      el.required = !!required;
+      store[key] = el;
+      lab.appendChild(el);
+      return lab;
     }
-    
-    // Cargar Planos, Materiales, Transporte y Empleados.
-    async function loadGenericModule(page) {
-      const message = $("moduleMessage");
-      const content = $("moduleContent");
-
-      const tableNames = {
-        drawings: "drawings",
-        materials: "materials",
-        transport: "transport_companies",
-        employees: "employees"
-      };
-
-      const tableName = tableNames[page];
-
-      if (!tableName) {
-        message.textContent = "Módulo no configurado.";
-        return;
+ 
+    function selectLabel(text, el) {
+      const lab = document.createElement("label");
+      lab.textContent = text;
+      lab.appendChild(el);
+      return lab;
+    }
+ 
+    function option(value, text) {
+      const o = document.createElement("option");
+      o.value = value;
+      o.textContent = text;
+      return o;
+    }
+ 
+    function renderEntryForm(body, afterSave) {
+      const title = document.createElement("h3");
+      title.textContent = "Registrar entrada de material";
+ 
+      const form = document.createElement("form");
+      form.className = "mat-form";
+ 
+      // 1) Familia y origen de la entrada
+      const famSel = document.createElement("select");
+      Object.entries(MAT).forEach(([k, f]) => famSel.appendChild(option(k, f.label)));
+ 
+      const modeSel = document.createElement("select");
+      modeSel.append(
+        option("DIRECTA", "Va directo a una obra (se usa automáticamente)"),
+        option("SOBRANTE", "Es sobrante de una obra (vuelve a disponible)"),
+        option("GENERAL", "Ingreso general al almacén (compra o reposición)")
+      );
+ 
+      const projSel = document.createElement("select");
+      projSel.appendChild(option("", "Selecciona la obra *"));
+      openProjects.forEach(p => projSel.appendChild(option(String(p.id), p.name || "Proyecto sin nombre")));
+ 
+      // 2) Material existente o nuevo
+      const matMode = document.createElement("select");
+      matMode.append(option("EXISTENTE", "Material que ya existe"), option("NUEVO", "Material nuevo"));
+      const matSel = document.createElement("select");
+ 
+      const famL = selectLabel("Familia *", famSel);
+      const modeL = selectLabel("¿De dónde viene esta entrada? *", modeSel);
+      const projL = selectLabel("Obra *", projSel);
+      const matModeL = selectLabel("Material *", matMode);
+      const matSelL = selectLabel("Elige el material *", matSel);
+      matSelL.className = "full";
+ 
+      // 3) Datos del material nuevo (se reconstruyen al cambiar de familia)
+      const newBox = document.createElement("div");
+      newBox.className = "full mat-form";
+      newBox.style.marginTop = "0";
+      let newInputs = {};
+ 
+      // 4) Cantidad, lote y comentario
+      const qty = document.createElement("input");
+      qty.type = "number"; qty.min = "0"; qty.step = "any"; qty.required = true;
+      const lot = document.createElement("input");
+      lot.type = "text";
+      const comment = document.createElement("input");
+      comment.type = "text";
+ 
+      const qtyL = selectLabel("Cantidad que entra *", qty);
+      const lotL = selectLabel("Lote", lot);
+      const commentL = selectLabel("Comentario / proveedor", comment);
+ 
+      const btn = document.createElement("button");
+      btn.type = "submit";
+      btn.textContent = "Registrar entrada";
+      btn.style.background = "#16a34a";
+      const who = document.createElement("p");
+      who.className = "muted";
+      who.textContent = "Registrado por: " + whoAmI();
+      const status = document.createElement("p");
+      status.setAttribute("role", "status");
+      const foot = document.createElement("div");
+      foot.className = "full";
+      foot.append(btn, who, status);
+ 
+      form.append(famL, modeL, projL, matModeL, matSelL, newBox, qtyL, lotL, commentL, foot);
+ 
+      // Reconstruye lo que depende de la familia y de las opciones elegidas
+      function rebuild() {
+        const fam = famSel.value;
+        const isNew = matMode.value === "NUEVO";
+        const mode = modeSel.value;
+ 
+        projL.hidden = mode === "GENERAL";
+        commentL.hidden = mode !== "GENERAL";
+        matSelL.hidden = isNew;
+        newBox.hidden = !isNew;
+        projSel.required = mode !== "GENERAL";
+        matSel.required = !isNew;
+ 
+        // Un sobrante siempre es de un material que ya existe
+        const newOpt = [...matMode.options].find(o => o.value === "NUEVO");
+        newOpt.disabled = mode === "SOBRANTE";
+        if (mode === "SOBRANTE" && isNew) { matMode.value = "EXISTENTE"; return rebuild(); }
+ 
+        matSel.replaceChildren(option("", "Selecciona..."));
+        MAT[fam].rows.forEach(r =>
+          matSel.appendChild(option(r.id, r.pr_code + " — " + (MAT[fam].name(r) ?? ""))));
+ 
+        newBox.replaceChildren();
+        newInputs = {};
+        MAT_FORM[fam].fields
+          .filter(([k]) => !["quantity", "available", "reserved"].includes(k))
+          .forEach(f => newBox.appendChild(entryField(f, newInputs)));
+        Object.values(newInputs).forEach(el => { el.required = el.required && isNew; });
       }
-
-      message.textContent = "Cargando registros...";
-      content.replaceChildren();
-
-      try {
-        const { data, error } = await db
-          .from(tableName)
-          .select("*");
-
-        if (error) throw error;
-
-        if (!data || data.length === 0) {
-          message.textContent =
-            "No hay registros visibles en " + tableName + ".";
-          return;
+ 
+      famSel.addEventListener("change", rebuild);
+      modeSel.addEventListener("change", rebuild);
+      matMode.addEventListener("change", rebuild);
+      rebuild();
+ 
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        btn.disabled = true;
+        status.style.color = "#b91c1c";
+        status.textContent = "";
+ 
+        try {
+          const fam = famSel.value, mode = modeSel.value;
+          const q = Number(qty.value);
+          if (!(q > 0)) throw new Error("La cantidad debe ser mayor que 0.");
+          if (mode !== "GENERAL" && !projSel.value) throw new Error("Selecciona la obra.");
+ 
+          let materialId = null, newRow = null;
+ 
+          if (matMode.value === "EXISTENTE") {
+            materialId = matSel.value;
+            if (!materialId) throw new Error("Elige el material.");
+          } else {
+            newRow = {};
+            MAT_FORM[fam].fields.forEach(([key, label, type, required]) => {
+              if (!(key in newInputs)) return;
+              const v = newInputs[key].value.trim();
+              if (required && !v) throw new Error("Falta el campo: " + label);
+              newRow[key] = v === "" ? null : (type === "number" ? Number(v) : v);
+            });
+ 
+            // Duplicados: aviso amable antes de enviar
+            for (const f of Object.values(MAT)) {
+              if (f.rows.some(r => normTxt(r.pr_code) === normTxt(newRow.pr_code))) {
+                throw new Error("El código PR \"" + newRow.pr_code + "\" ya existe en " + f.label + ".");
+              }
+            }
+            const nk = MAT_FORM[fam].nameKey;
+            if (MAT[fam].rows.some(r => normTxt(r[nk]) === normTxt(newRow[nk]))) {
+              throw new Error("Ya existe un material llamado \"" + newRow[nk] + "\" en " + MAT[fam].label + ".");
+            }
+            // La cantidad real la pone la entrada
+            newRow.quantity = 0; newRow.available = 0; newRow.reserved = 0;
+          }
+ 
+          const { error } = await db.rpc("register_entry", {
+            p_family: fam,
+            p_material_id: materialId,
+            p_new: newRow,
+            p_qty: q,
+            p_lot: lot.value.trim() || null,
+            p_mode: mode,
+            p_project_id: mode === "GENERAL" ? null : projSel.value,
+            p_comment: comment.value.trim() || null
+          });
+ 
+          if (error) {
+            if (error.code === "23505") {
+              throw new Error("Ese código PR o nombre ya existe en la base de datos.");
+            }
+            throw error;
+          }
+ 
+          await fetchMaterialRows();
+          afterSave("✅ Entrada registrada.");
+        } catch (error) {
+          console.error("Error al registrar entrada:", error);
+          status.textContent = error.message;
+          btn.disabled = false;
         }
-
-        message.textContent =
-          "Registros encontrados: " + data.length;
-
-        // Detectar las columnas automáticamente.
-        const columns = Object.keys(data[0]).map(key => ({
-          key: key,
-          label: key.replaceAll("_", " ")
-        }));
-
-         // Empleados: por apellido y nombre. Otras tablas: por nombre o título.
-        const prefer = [["last_name", "first_name"], ["name"], ["company_name"], ["title"]];
-        const sortKeys = prefer.find(ks => ks.every(k => k in data[0])) || [];
-        renderModuleTable(sortKeys.length ? sortBy(data, ...sortKeys) : data, columns);
-      } catch (error) {
-        console.error(
-          "Error al cargar la tabla " + tableName + ":",
-          error
-        );
-
-        message.textContent =
-          "Error al consultar " + tableName + ": " +
-          error.message;
-      }
+      });
+ 
+      body.append(title, form);
     }
-
+ 
 const DRAW_EXT = ["pdf", "dwg", "dxf", "png", "jpg", "jpeg", "xlsx", "docx"];
     const DRAW_MAX = 50 * 1024 * 1024;   // 50 MB
  
@@ -1086,6 +1644,135 @@ const DRAW_EXT = ["pdf", "dwg", "dxf", "png", "jpg", "jpeg", "xlsx", "docx"];
         ));
       }
  
+      const TRANSPORT_FIELDS = [
+      ["name", "Nombre de la empresa", "text", 1],
+      ["tax_id", "NIF / CIF", "text"],
+      ["contact_name", "Persona de contacto", "text"],
+      ["phone", "Teléfono", "tel"],
+      ["email", "Correo electrónico", "email"],
+      ["address", "Dirección", "text"],
+      ["notes", "Notas", "text"]
+    ];
+ 
+    async function loadTransport() {
+      const content = $("moduleContent");
+      const message = $("moduleMessage");
+      message.textContent = "Cargando transporte...";
+      content.replaceChildren();
+ 
+      let rows = [];
+      try {
+        const { data, error } = await db.from("transport_companies").select("*");
+        if (error) throw error;
+        rows = sortBy(data || [], "name");
+      } catch (error) {
+        console.error("Error al cargar transporte:", error);
+        message.textContent = "Error al consultar transport_companies: " + error.message;
+        return;
+      }
+      message.textContent = "";
+ 
+      // Sub pestañas: Listado / Agregar
+      const tabs = document.createElement("div");
+      tabs.className = "nav";
+      const body = document.createElement("div");
+      content.append(tabs, body);
+ 
+      const tabBtns = {};
+      [["list", "Listado"], ["add", "➕ Agregar transporte"]].forEach(([k, label]) => {
+        const b = document.createElement("button");
+        b.textContent = label;
+        b.addEventListener("click", () => show(k));
+        tabs.appendChild(b);
+        tabBtns[k] = b;
+      });
+ 
+      function show(tab) {
+        Object.entries(tabBtns).forEach(([k, b]) => b.classList.toggle("active", k === tab));
+        body.replaceChildren();
+        if (tab === "add") renderAdd(); else renderList();
+      }
+ 
+      function renderList() {
+        if (rows.length === 0) {
+          body.textContent = "No hay empresas de transporte registradas.";
+          return;
+        }
+        const keys = Object.keys(rows[0]).filter(k => k !== "id");
+        body.appendChild(makeTable(
+          keys.map(k => k.replaceAll("_", " ")),
+          rows.map(r => keys.map(k => {
+            const v = r[k];
+            return v !== null && typeof v === "object" ? JSON.stringify(v) : v;
+          }))
+        ));
+      }
+ 
+      function renderAdd() {
+        const title = document.createElement("h3");
+        title.textContent = "Agregar transporte";
+ 
+        const form = document.createElement("form");
+        form.className = "mat-form";
+        const inputs = {};
+ 
+        TRANSPORT_FIELDS.forEach(([key, label, type, required]) => {
+          const lab = document.createElement("label");
+          lab.textContent = label + (required ? " *" : "");
+          const el = document.createElement("input");
+          el.type = type;
+          el.required = !!required;
+          inputs[key] = el;
+          lab.appendChild(el);
+          form.appendChild(lab);
+        });
+ 
+        const btn = document.createElement("button");
+        btn.type = "submit";
+        btn.textContent = "Guardar transporte";
+        const status = document.createElement("p");
+        status.setAttribute("role", "status");
+        const foot = document.createElement("div");
+        foot.className = "full";
+        foot.append(btn, status);
+        form.appendChild(foot);
+ 
+        form.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          btn.disabled = true;
+          status.style.color = "#b91c1c";
+          status.textContent = "";
+ 
+          try {
+            const row = {};
+            TRANSPORT_FIELDS.forEach(([key, label, , required]) => {
+              const v = inputs[key].value.trim();
+              if (required && !v) throw new Error("Falta el campo: " + label);
+              row[key] = v === "" ? null : v;
+            });
+ 
+            const { data, error } = await db
+              .from("transport_companies").insert(row).select().single();
+            if (error) throw error;
+ 
+            rows = sortBy([...rows, data], "name");
+            status.style.color = "#166534";
+            status.textContent = "Transporte guardado correctamente.";
+            form.reset();
+          } catch (error) {
+            console.error("Error al agregar transporte:", error);
+            status.textContent = error.message;
+          } finally {
+            btn.disabled = false;
+          }
+        });
+ 
+        body.append(title, form);
+      }
+ 
+      show("list");
+    }
+ 
       // ----- Subir archivo -----
       form.addEventListener("submit", async (event) => {
         event.preventDefault();
@@ -1179,8 +1866,10 @@ const DRAW_EXT = ["pdf", "dwg", "dxf", "png", "jpg", "jpeg", "xlsx", "docx"];
             loadMaterials();
           } else if (page === "movements") {
             loadMovements();
-          } else if (page === "drawings") {
+         } else if (page === "drawings") {
             loadDrawings();
+          } else if (page === "transport") {
+            loadTransport();
           } else {
             loadGenericModule(page);
           }
@@ -1369,7 +2058,7 @@ const DRAW_EXT = ["pdf", "dwg", "dxf", "png", "jpg", "jpeg", "xlsx", "docx"];
       draw();
     }
  
-      function renderMatSummary() {
+         function renderMatSummary() {
       const body = $("matBody");
       body.replaceChildren();
       if (matSel.size === 0) {
@@ -1388,7 +2077,7 @@ const DRAW_EXT = ["pdf", "dwg", "dxf", "png", "jpg", "jpeg", "xlsx", "docx"];
         items.map(i => {
           const lot = document.createElement("input");
           lot.type = "text";
-          lot.placeholder = "Lote ";
+          lot.placeholder = "Lote (opcional)";
           lot.style.width = "160px";
           lot.value = i.lot || "";
           lot.addEventListener("input", () => { i.lot = lot.value; });
@@ -1411,14 +2100,31 @@ const DRAW_EXT = ["pdf", "dwg", "dxf", "png", "jpg", "jpeg", "xlsx", "docx"];
         Object.entries(totals)
           .sort((a, b) => collator.compare(MAT[a[0]].label, MAT[b[0]].label))
           .map(([k, t]) =>
-          [MAT[k].label, t.lines, t.qty, [...t.units].join(" / ")])
+            [MAT[k].label, t.lines, t.qty, [...t.units].join(" / ")])
       ));
  
-      // ----- Obra de destino + botón Guardar (abajo a la derecha, verde) -----
-      const obra = document.createElement("input");
-      obra.type = "text";
-      obra.placeholder = "Obra de destino *";
-      obra.style.cssText = "margin:0;max-width:340px;";
+      // ----- Obra de destino (lista de proyectos) + responsable + Guardar -----
+      const obra = document.createElement("select");
+      obra.className = "mat-family";
+      obra.style.maxWidth = "340px";
+      const ph = document.createElement("option");
+      ph.value = "";
+      ph.textContent = "Selecciona la obra *";
+      obra.appendChild(ph);
+      openProjects.forEach(p => {
+        const o = document.createElement("option");
+        o.value = String(p.id);
+        o.textContent = p.name || "Proyecto sin nombre";
+        obra.appendChild(o);
+      });
+ 
+      const who = document.createElement("p");
+      who.className = "muted";
+      who.style.margin = "0";
+      who.textContent = "Registrado por: " + whoAmI();
+ 
+      const left = document.createElement("div");
+      left.append(obra, who);
  
       const save = document.createElement("button");
       save.type = "button";
@@ -1428,21 +2134,25 @@ const DRAW_EXT = ["pdf", "dwg", "dxf", "png", "jpg", "jpeg", "xlsx", "docx"];
       const bar = document.createElement("div");
       bar.style.cssText =
         "display:flex;justify-content:flex-end;align-items:center;" +
-        "gap:12px;flex-wrap:wrap;margin-top:28px;";
-      bar.append(obra, save);
+        "gap:16px;flex-wrap:wrap;margin-top:28px;";
+      bar.append(left, save);
  
       const msg = document.createElement("p");
       msg.setAttribute("role", "status");
       msg.style.textAlign = "right";
+      if (openProjects.length === 0) {
+        msg.style.color = "#b91c1c";
+        msg.textContent = "No hay obras abiertas. Crea o reabre un proyecto para asignarle material.";
+      }
  
       save.addEventListener("click", async () => {
-        const destino = obra.value.trim();
-        if (!destino) {
+        if (!obra.value) {
           msg.style.color = "#b91c1c";
-          msg.textContent = "Escribe la obra a la que irá el material.";
+          msg.textContent = "Selecciona la obra a la que irá el material.";
           obra.focus();
           return;
         }
+        const obraName = obra.options[obra.selectedIndex].text;
  
         save.disabled = true;
         msg.style.color = "#667085";
@@ -1454,15 +2164,15 @@ const DRAW_EXT = ["pdf", "dwg", "dxf", "png", "jpg", "jpeg", "xlsx", "docx"];
           }));
  
           const { error } = await db.rpc("reserve_materials", {
-            p_obra: destino,
+            p_project_id: obra.value,
             p_items: payload
           });
           if (error) throw error;
  
           matSel.clear();
-          await loadMaterials();   // recarga las cantidades ya restadas
+          await loadMaterials();
           $("moduleMessage").textContent =
-            "✅ Movimientos guardados para la obra: " + destino;
+            "✅ Material asignado a la obra: " + obraName;
         } catch (error) {
           console.error("Error al guardar movimientos:", error);
           msg.style.color = "#b91c1c";
@@ -1653,23 +2363,44 @@ const DRAW_EXT = ["pdf", "dwg", "dxf", "png", "jpg", "jpeg", "xlsx", "docx"];
       else if (key === "add") renderMatForm();
       else renderMatTable(key);
 
-     async function loadMaterials() {
+         // Nombre de quien tiene la sesión iniciada (solo para mostrarlo; el registro real lo hace la base de datos)
+    function whoAmI() {
+      const n = [currentEmployee?.first_name, currentEmployee?.last_name].filter(Boolean).join(" ");
+      return n || currentUser?.email || "—";
+    }
+ 
+    // Carga todas las filas de las 5 familias, ya ordenadas
+    async function fetchMaterialRows() {
+      await Promise.all(Object.entries(MAT).map(async ([key, f]) => {
+        const { data, error } = await db.from(f.table).select("*");
+        if (error) throw new Error(f.table + ": " + error.message);
+        f.rows = sortBy(
+          (data || []).map(r => prepMatRow(key, r)),
+          MAT_FORM[key].nameKey, "pr_code"
+        );
+      }));
+    }
+ 
+    // Obras abiertas (menos de 100%), ordenadas por nombre
+    
+    async function fetchOpenProjects() {
+      const { data, error } = await db
+        .from("projects").select("id, name, progress_percentage");
+      if (error) throw new Error("projects: " + error.message);
+      openProjects = sortBy(
+        (data || []).filter(p => Number(p.progress_percentage ?? 0) < 100), "name");
+    }
+ 
+    async function loadMaterials() {
       const content = $("moduleContent");
       content.replaceChildren();
       $("moduleMessage").textContent = "Cargando materiales...";
-
+ 
       try {
-        await Promise.all(Object.entries(MAT).map(async ([key, f]) => {
-          const { data, error } = await db.from(f.table).select("*").order("pr_code");
-          if (error) throw new Error(f.table + ": " + error.message);
-         f.rows = sortBy(
-            (data || []).map(r => prepMatRow(key, r)),
-            MAT_FORM[key].nameKey, "pr_code"
-          );
-        }));
-
+        await Promise.all([fetchMaterialRows(), fetchOpenProjects()]);
+ 
         $("moduleMessage").textContent = "";
-
+ 
         const tabs = document.createElement("div");
         tabs.className = "nav";
         tabs.id = "matTabs";
@@ -1682,7 +2413,7 @@ const DRAW_EXT = ["pdf", "dwg", "dxf", "png", "jpg", "jpeg", "xlsx", "docx"];
             b.addEventListener("click", () => showMatTab(k));
             tabs.appendChild(b);
           });
-
+ 
         const body = document.createElement("div");
         body.id = "matBody";
         content.append(tabs, body);
@@ -1691,30 +2422,6 @@ const DRAW_EXT = ["pdf", "dwg", "dxf", "png", "jpg", "jpeg", "xlsx", "docx"];
         console.error("Error al cargar materiales:", error);
         $("moduleMessage").textContent =
           "No se pudieron cargar los materiales: " + error.message;
-      }
-    }
-    // 11. Restaurar una sesión guardada al abrir la página.
-    async function initialize() {
-      showLogin();
-
-      const { data, error } = await db.auth.getSession();
-
-      if (error) {
-        showLogin(
-          "No se pudo comprobar la sesión: " + error.message
-        );
-        return;
-      }
-
-      if (data.session) {
-        try {
-          await enterApplication(data.session.user);
-        } catch (error) {
-          console.error(
-            "No se pudo restaurar el perfil:",
-            error.message
-          );
-        }
       }
     }
 
