@@ -289,7 +289,7 @@
             </div>
           </div>
           <div id="newProjectBox" hidden></div>
-          </div>
+          
 
           <p id="projectMessage" class="muted">Cargando proyectos...</p>
           <div id="projectList"></div>
@@ -1125,11 +1125,6 @@
  
         if (error) throw error;
  
-        if (!data || data.length === 0) {
-          message.textContent = "No hay maquinaria registrada.";
-          return;
-        }
- 
         machineryRows = sortBy(data, "name", "machinery_code");
         message.textContent = "";
         renderMachinery();
@@ -1228,7 +1223,7 @@
       count.className = "muted";
  
       const holder = document.createElement("div");
-      content.append(search, count, holder);
+      content.append(...buildMachineryAdd(() => draw()), search, count, holder);
  
       const draw = () => {
         const terms = foldTxt(search.value).split(/\s+/).filter(Boolean);
@@ -1336,7 +1331,7 @@
         })
       ));
     }
- 
+    
     // Etiqueta + campo (texto, número, fecha o lista) para el formulario de entradas
     function entryField([key, label, type, required], store) {
       const lab = document.createElement("label");
@@ -1358,6 +1353,122 @@
       store[key] = el;
       lab.appendChild(el);
       return lab;
+    }
+    
+    // Botón "➕ Agregar maquinaria" + formulario desplegable.
+    // Devuelve [barra, panel]; onSaved vuelve a dibujar la tabla.
+    function buildMachineryAdd(onSaved) {
+      const bar = document.createElement("div");
+      bar.style.margin = "0 0 14px";
+      const toggle = document.createElement("button");
+      toggle.type = "button";
+      toggle.textContent = "➕ Agregar maquinaria";
+      toggle.style.background = "#16a34a";
+      bar.appendChild(toggle);
+ 
+      const panel = document.createElement("div");
+      panel.hidden = true;
+ 
+      const fields = [
+        ["machinery_code", "Código", "text", true],
+        ["name", "Nombre de la maquinaria", "text", true],
+        ["category", "Categoría", "text", false],
+        ["brand", "Marca", "text", false],
+        ["current_location", "¿Dónde está ahora mismo?", "text", true]
+      ];
+ 
+      function build() {
+        const form = document.createElement("form");
+        form.className = "mat-form";
+        form.style.cssText =
+          "margin:0 0 20px;padding:18px;border:1px solid var(--border);" +
+          "border-radius:12px;background:#f8fafc;";
+        const inputs = {};
+ 
+        fields.forEach(([key, label, type, required]) => {
+          const lab = document.createElement("label");
+          lab.textContent = label + (required ? " *" : "");
+          const el = document.createElement("input");
+          el.type = type;
+          el.required = required;
+          inputs[key] = el;
+          lab.appendChild(el);
+          form.appendChild(lab);
+        });
+ 
+        // Disponibilidad inicial
+        const availLab = document.createElement("label");
+        availLab.textContent = "Disponible";
+        const avail = document.createElement("select");
+        [["", "Sin definir"], ["true", "Disponible"], ["false", "No disponible"]].forEach(([v, t]) => {
+          const o = document.createElement("option");
+          o.value = v; o.textContent = t;
+          avail.appendChild(o);
+        });
+        availLab.appendChild(avail);
+        form.appendChild(availLab);
+ 
+        const save = document.createElement("button");
+        save.type = "submit";
+        save.textContent = "Guardar maquinaria";
+        const cancel = document.createElement("button");
+        cancel.type = "button";
+        cancel.className = "secondary";
+        cancel.textContent = "Cancelar";
+        cancel.style.marginLeft = "8px";
+        cancel.addEventListener("click", () => { panel.hidden = true; });
+        const status = document.createElement("p");
+        status.setAttribute("role", "status");
+        const foot = document.createElement("div");
+        foot.className = "full";
+        foot.append(save, cancel, status);
+        form.appendChild(foot);
+ 
+        form.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          save.disabled = true;
+          status.style.color = "#b91c1c";
+          status.textContent = "";
+ 
+          try {
+            const row = {};
+            fields.forEach(([key, label, , required]) => {
+              const v = inputs[key].value.trim();
+              if (required && !v) throw new Error("Falta el campo: " + label);
+              row[key] = v === "" ? null : v;
+            });
+            row.is_available = avail.value === "" ? null : avail.value === "true";
+ 
+            if (machineryRows.some(m => normTxt(m.machinery_code) === normTxt(row.machinery_code))) {
+              throw new Error("El código \"" + row.machinery_code + "\" ya existe.");
+            }
+ 
+            const { data, error } = await db.from("machinery").insert(row).select().single();
+            if (error) {
+              if (error.code === "23505") throw new Error("Ese código ya existe en la base de datos.");
+              throw error;
+            }
+ 
+            machineryRows = sortBy([...machineryRows, data], "name", "machinery_code");
+            panel.hidden = true;
+            onSaved();
+          } catch (error) {
+            console.error("Error al agregar maquinaria:", error);
+            status.textContent = error.message;
+            save.disabled = false;
+          }
+        });
+ 
+        return form;
+      }
+ 
+      toggle.addEventListener("click", () => {
+        if (!panel.hidden) { panel.hidden = true; return; }
+        panel.replaceChildren(build());
+        panel.hidden = false;
+      });
+ 
+      return [bar, panel];
     }
  
     function selectLabel(text, el) {
@@ -1644,7 +1755,112 @@ const DRAW_EXT = ["pdf", "dwg", "dxf", "png", "jpg", "jpeg", "xlsx", "docx"];
         ));
       }
  
-      const TRANSPORT_FIELDS = [
+ 
+      // ----- Subir archivo -----
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        status.style.color = "#b91c1c";
+        status.textContent = "";
+ 
+        const file = fileIn.files[0];
+        if (!file) return;
+ 
+        const ext = (file.name.split(".").pop() || "").toLowerCase();
+        if (!DRAW_EXT.includes(ext)) {
+          status.textContent = "Formato no permitido. Usa: " + DRAW_EXT.join(", ") + ".";
+          return;
+        }
+        if (file.size > DRAW_MAX) {
+          status.textContent = "El archivo supera los 50 MB.";
+          return;
+        }
+ 
+        btn.disabled = true;
+        status.style.color = "#667085";
+        status.textContent = "Subiendo...";
+ 
+        // Nombre interno único: evita choques y caracteres raros. El nombre original se guarda aparte.
+        const path = crypto.randomUUID() + "." + ext;
+ 
+        try {
+          const up = await db.storage.from("planos").upload(path, file, {
+            contentType: file.type || "application/octet-stream",
+            upsert: false
+          });
+          if (up.error) throw up.error;
+ 
+          const ins = await db.from("drawing_files").insert({
+            title: titleIn.value.trim(),
+            description: descIn.value.trim() || null,
+            file_path: path,
+            file_name: file.name,
+            mime_type: file.type || null,
+            size_bytes: file.size
+          });
+ 
+          if (ins.error) {
+            // Si falla el registro, se borra el archivo para no dejar huérfanos
+            await db.storage.from("planos").remove([path]);
+            throw ins.error;
+          }
+ 
+          status.style.color = "#166534";
+          status.textContent = "Plano subido correctamente.";
+          form.reset();
+          await refresh();
+        } catch (error) {
+          console.error("Error al subir el plano:", error);
+          status.style.color = "#b91c1c";
+          status.textContent = "No se pudo subir: " + error.message;
+        } finally {
+          btn.disabled = false;
+        }
+      });
+ 
+      await refresh();
+    }
+ 
+
+    // Navegación entre módulos.
+    document.querySelectorAll("[data-page]").forEach(button => {
+      button.addEventListener("click", () => {
+        const page = button.dataset.page;
+
+        document.querySelectorAll("[data-page]").forEach(item => {
+          item.classList.toggle("active", item === button);
+        });
+
+        const isProjects = page === "projects";
+
+        $("projectsPage").hidden = !isProjects;
+        $("otherPage").hidden = isProjects;
+
+        if (!isProjects) {
+          $("otherTitle").textContent = moduleInfo[page].title;
+          $("otherDescription").textContent =
+            moduleInfo[page].description;
+
+          $("moduleMessage").textContent = "";
+          $("moduleContent").replaceChildren();
+
+           if (page === "machinery") {
+            loadMachinery();
+           } else if (page === "materials") {
+            loadMaterials();
+          } else if (page === "movements") {
+            loadMovements();
+         } else if (page === "drawings") {
+            loadDrawings();
+          } else if (page === "transport") {
+            loadTransport();
+          } else {
+            loadGenericModule(page);
+          }
+        }
+      });
+    });
+
+    const TRANSPORT_FIELDS = [
       ["name", "Nombre de la empresa", "text", 1],
       ["tax_id", "NIF / CIF", "text"],
       ["contact_name", "Persona de contacto", "text"],
@@ -1772,112 +1988,6 @@ const DRAW_EXT = ["pdf", "dwg", "dxf", "png", "jpg", "jpeg", "xlsx", "docx"];
  
       show("list");
     }
- 
-      // ----- Subir archivo -----
-      form.addEventListener("submit", async (event) => {
-        event.preventDefault();
-        status.style.color = "#b91c1c";
-        status.textContent = "";
- 
-        const file = fileIn.files[0];
-        if (!file) return;
- 
-        const ext = (file.name.split(".").pop() || "").toLowerCase();
-        if (!DRAW_EXT.includes(ext)) {
-          status.textContent = "Formato no permitido. Usa: " + DRAW_EXT.join(", ") + ".";
-          return;
-        }
-        if (file.size > DRAW_MAX) {
-          status.textContent = "El archivo supera los 50 MB.";
-          return;
-        }
- 
-        btn.disabled = true;
-        status.style.color = "#667085";
-        status.textContent = "Subiendo...";
- 
-        // Nombre interno único: evita choques y caracteres raros. El nombre original se guarda aparte.
-        const path = crypto.randomUUID() + "." + ext;
- 
-        try {
-          const up = await db.storage.from("planos").upload(path, file, {
-            contentType: file.type || "application/octet-stream",
-            upsert: false
-          });
-          if (up.error) throw up.error;
- 
-          const ins = await db.from("drawing_files").insert({
-            title: titleIn.value.trim(),
-            description: descIn.value.trim() || null,
-            file_path: path,
-            file_name: file.name,
-            mime_type: file.type || null,
-            size_bytes: file.size
-          });
- 
-          if (ins.error) {
-            // Si falla el registro, se borra el archivo para no dejar huérfanos
-            await db.storage.from("planos").remove([path]);
-            throw ins.error;
-          }
- 
-          status.style.color = "#166534";
-          status.textContent = "Plano subido correctamente.";
-          form.reset();
-          await refresh();
-        } catch (error) {
-          console.error("Error al subir el plano:", error);
-          status.style.color = "#b91c1c";
-          status.textContent = "No se pudo subir: " + error.message;
-        } finally {
-          btn.disabled = false;
-        }
-      });
- 
-      await refresh();
-    }
- 
-
-    // Navegación entre módulos.
-    document.querySelectorAll("[data-page]").forEach(button => {
-      button.addEventListener("click", () => {
-        const page = button.dataset.page;
-
-        document.querySelectorAll("[data-page]").forEach(item => {
-          item.classList.toggle("active", item === button);
-        });
-
-        const isProjects = page === "projects";
-
-        $("projectsPage").hidden = !isProjects;
-        $("otherPage").hidden = isProjects;
-
-        if (!isProjects) {
-          $("otherTitle").textContent = moduleInfo[page].title;
-          $("otherDescription").textContent =
-            moduleInfo[page].description;
-
-          $("moduleMessage").textContent = "";
-          $("moduleContent").replaceChildren();
-
-           if (page === "machinery") {
-            loadMachinery();
-           } else if (page === "materials") {
-            loadMaterials();
-          } else if (page === "movements") {
-            loadMovements();
-         } else if (page === "drawings") {
-            loadDrawings();
-          } else if (page === "transport") {
-            loadTransport();
-          } else {
-            loadGenericModule(page);
-          }
-        }
-      });
-    });
-
-    
    
      
 // ---------- MATERIALES: subpestañas ----------
@@ -2359,9 +2469,7 @@ const DRAW_EXT = ["pdf", "dwg", "dxf", "png", "jpg", "jpeg", "xlsx", "docx"];
       else if (key === "add") renderMatForm();
       else renderMatTable(key);
     }
-     if (key === "summary") renderMatSummary();
-      else if (key === "add") renderMatForm();
-      else renderMatTable(key);
+    
 
          // Nombre de quien tiene la sesión iniciada (solo para mostrarlo; el registro real lo hace la base de datos)
     function whoAmI() {
