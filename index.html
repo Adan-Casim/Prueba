@@ -190,6 +190,43 @@
     .mat-table th { border-bottom: 2px solid var(--border); }
     .mat-table input { width: 90px; margin: 0; padding: 8px; }
     .warn { color: #991b1b; font-weight: bold; }
+    .tech-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+    .tech-head h3 { margin: 0; }
+    .chips { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 18px; }
+    .chip {
+      display: flex; align-items: center; gap: 10px; padding: 7px 12px 7px 7px;
+      border-radius: 999px; background: #eef2f9; color: #1e293b;
+      border: 1px solid var(--border); font-weight: 600;
+    }
+    .chip:hover { background: #e2e8f0; }
+    .chip.active { background: var(--primary); color: #fff; border-color: var(--primary); }
+    .avatar {
+      width: 30px; height: 30px; border-radius: 50%; flex: none;
+      background: var(--primary); color: #fff; font-size: 12px; font-weight: bold;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .avatar.big { width: 46px; height: 46px; font-size: 16px; }
+    .chip.active .avatar { background: #fff; color: var(--primary); }
+    .chip .count {
+      background: rgba(15, 23, 42, 0.08); border-radius: 999px;
+      padding: 2px 9px; font-size: 12px;
+    }
+    .chip.active .count { background: rgba(255, 255, 255, 0.25); }
+    .tech-panel {
+      border: 1px solid var(--border); border-radius: 12px;
+      padding: 18px; background: #f8fafc;
+    }
+    .tech-title { display: flex; align-items: center; gap: 14px; margin-bottom: 8px; }
+    .tech-title strong { font-size: 17px; }
+    .tech-meta { color: var(--muted); font-size: 14px; }
+    .mini-bar { height: 8px; width: 120px; background: #e5e7eb; border-radius: 20px; overflow: hidden; }
+    .mini-bar div { height: 100%; background: var(--primary); }
+    .assign-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 16px; }
+    .assign-row select { flex: 1; min-width: 220px; max-width: 420px; }
+    .empty-note {
+      padding: 18px; text-align: center; color: var(--muted);
+      border: 1px dashed #cbd5e1; border-radius: 10px; background: white;
+    }
     @media (max-width: 600px) {
       main { padding: 16px; }
       header { padding: 16px; }
@@ -262,6 +299,7 @@
             <div class="muted">Proyectos</div>
             <div id="totalProjects" class="metric">0</div>
           </div>
+          
 
           <div class="card">
             <div class="muted">Atrasados</div>
@@ -280,7 +318,7 @@
         </div>
 
         <div class="card">
-           <div style="display:flex;justify-content:space-between;
+            <div style="display:flex;justify-content:space-between;
                       align-items:center;gap:12px;flex-wrap:wrap">
             <h3>Proyectos actuales</h3>
             <div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -391,7 +429,8 @@
           first_name,
           last_name,
           email,
-          job_title
+          job_title,
+          app_role
         `)
         .eq("auth_user_id", userId)
         .maybeSingle();
@@ -437,6 +476,7 @@
       $("employeeEmail").textContent =
         employee.email || user.email || "Sin correo";
 
+       $("newProjectBtn").hidden = !isManager();
       $("loginView").hidden = true;
       $("appView").hidden = false;
       $("logoutBtn").hidden = false;
@@ -447,7 +487,7 @@
     async function enterApplication(user) {
       try {
         const employee = await loadEmployeeProfile(user.id);
-
+        
         showApp(user, employee);
         await loadProjects();
       } catch (error) {
@@ -512,6 +552,7 @@
         button.disabled = false;
       }
     });
+
 
     // 8. Clasificar el estado del proyecto.
     function getProjectStatus(project, publishedUpdate) {
@@ -663,6 +704,277 @@
       }
     }
 
+     const isManager = () => currentEmployee?.app_role === "gerente";
+ 
+     // ---------- Ayudas para mostrar planos (se usan en Planos y en el panel del técnico) ----------
+    const PLAN_HEADERS = ["Título", "Proyecto", "Descripción", "Archivo", "Tamaño", "Subido"];
+ 
+    function planCells(d, projName) {
+      return [
+        d.title,
+        d.project_id ? (projName[String(d.project_id)] || "—") : "Sin proyecto",
+        d.description, d.file_name,
+        d.size_bytes ? fmtSize(d.size_bytes) : "—",
+        new Date(d.uploaded_at).toLocaleString("es-ES")
+      ];
+    }
+ 
+    function openBtn(d) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.textContent = "Abrir";
+      b.addEventListener("click", async () => {
+        // Se abre la pestaña antes del await para que no la bloquee el navegador
+        const w = window.open("about:blank", "_blank");
+        const { data, error } = await db.storage.from("planos").createSignedUrl(d.file_path, 120);
+        if (error) {
+          if (w) w.close();
+          alert("No se pudo abrir el archivo: " + error.message);
+          return;
+        }
+        if (w) w.location.href = data.signedUrl;
+        else window.open(data.signedUrl, "_blank");
+      });
+      return b;
+    }
+ 
+    // Panel del gerente: técnicos, sus proyectos y sus planos.
+    // Devuelve { reshow } para refrescar el técnico elegido.
+    async function renderTechnicians(card, opts = {}) {
+      card.replaceChildren();
+      const noop = { reshow: () => {} };
+      if (!isManager()) { card.hidden = true; return noop; }
+      card.hidden = false;
+ 
+      const head = document.createElement("div");
+      head.className = "tech-head";
+      const h = document.createElement("h3");
+      h.textContent = "Técnicos";
+      const sub = document.createElement("span");
+      sub.className = "muted";
+      head.append(h, sub);
+ 
+      const chips = document.createElement("div");
+      chips.className = "chips";
+      const hint = document.createElement("p");
+      hint.className = "muted";
+      hint.style.margin = "0";
+      hint.textContent = "Selecciona un técnico para ver y asignar sus proyectos y planos.";
+      const panel = document.createElement("div");
+      panel.className = "tech-panel";
+      panel.hidden = true;
+      card.append(head, chips, hint, panel);
+ 
+      const [emp, asg] = await Promise.all([
+        db.from("employees")
+          .select("auth_user_id, first_name, last_name, email, job_title")
+          .eq("app_role", "tecnico"),
+        db.from("project_assignments").select("user_id")
+      ]);
+      if (emp.error) {
+        hint.textContent = "No se pudieron cargar los técnicos: " + emp.error.message;
+        return noop;
+      }
+ 
+      const counts = {};
+      (asg.data || []).forEach(a => { counts[a.user_id] = (counts[a.user_id] || 0) + 1; });
+ 
+      const techs = sortBy((emp.data || []).map(t => ({
+        ...t,
+        full: [t.first_name, t.last_name].filter(Boolean).join(" ") || t.email
+      })), "full");
+ 
+      sub.textContent = techs.length + (techs.length === 1 ? " técnico" : " técnicos");
+      if (techs.length === 0) {
+        hint.textContent = "Aún no hay técnicos. Créalos en Supabase (instrucciones al final de roles.sql).";
+        return noop;
+      }
+ 
+      const initials = n => n.split(/\s+/).filter(Boolean)
+        .map(w => w[0]).slice(0, 2).join("").toUpperCase();
+      const countEls = {};
+      let current = null;
+ 
+      async function showTech(t) {
+        current = t;
+        hint.hidden = true;
+        panel.hidden = false;
+        panel.textContent = "Cargando...";
+ 
+        const [pr, as, pl] = await Promise.all([
+          db.from("projects").select("id, name, due_date, progress_percentage"),
+          db.from("project_assignments").select("project_id").eq("user_id", t.auth_user_id),
+          db.from("drawing_files").select("*").eq("assigned_to", t.auth_user_id)
+        ]);
+        const err = pr.error || as.error || pl.error;
+        if (err) { panel.textContent = "Error: " + err.message; return; }
+ 
+        const ids = new Set((as.data || []).map(a => String(a.project_id)));
+        const all = sortBy(pr.data || [], "name");
+        const mine = all.filter(p => ids.has(String(p.id)));
+        const free = all.filter(p => !ids.has(String(p.id)));
+        const projMap = {};
+        all.forEach(p => { projMap[String(p.id)] = p.name || "Proyecto sin nombre"; });
+        countEls[t.auth_user_id].textContent = mine.length;
+ 
+        // Cabecera del técnico
+        const title = document.createElement("div");
+        title.className = "tech-title";
+        const av = document.createElement("div");
+        av.className = "avatar big";
+        av.textContent = initials(t.full);
+        const info = document.createElement("div");
+        const nm = document.createElement("strong");
+        nm.textContent = t.full;
+        const meta = document.createElement("div");
+        meta.className = "tech-meta";
+        meta.textContent = [t.job_title || "Técnico", t.email].filter(Boolean).join(" · ");
+        info.append(nm, meta);
+        title.append(av, info);
+        panel.replaceChildren(title);
+ 
+        const section = text => {
+          const s = document.createElement("h4");
+          s.textContent = text;
+          s.style.margin = "18px 0 4px";
+          return s;
+        };
+        const empty = text => {
+          const e = document.createElement("div");
+          e.className = "empty-note";
+          e.textContent = text;
+          return e;
+        };
+ 
+        // ----- Proyectos asignados -----
+        panel.appendChild(section("Proyectos asignados"));
+        if (mine.length === 0) {
+          panel.appendChild(empty("Todavía no tiene proyectos asignados."));
+        } else {
+          panel.appendChild(makeTable(
+            ["Proyecto", "Entrega", "Avance", ""],
+            mine.map(p => {
+              const pct = Math.max(0, Math.min(100, Number(p.progress_percentage ?? 0)));
+              const cell = document.createElement("div");
+              cell.style.cssText = "display:flex;align-items:center;gap:10px;";
+              const bar = document.createElement("div");
+              bar.className = "mini-bar";
+              const fill = document.createElement("div");
+              fill.style.width = pct + "%";
+              bar.appendChild(fill);
+              const txt = document.createElement("span");
+              txt.textContent = pct + "%";
+              cell.append(bar, txt);
+ 
+              const rm = document.createElement("button");
+              rm.type = "button";
+              rm.className = "secondary";
+              rm.textContent = "Quitar";
+              rm.addEventListener("click", async () => {
+                rm.disabled = true;
+                const { error: e } = await db.from("project_assignments").delete()
+                  .eq("project_id", String(p.id)).eq("user_id", t.auth_user_id);
+                if (e) { alert("No se pudo quitar: " + e.message); rm.disabled = false; return; }
+                showTech(t);
+              });
+              return [p.name || "Proyecto sin nombre", p.due_date || "—", cell, rm];
+            })
+          ));
+        }
+ 
+        if (free.length > 0) {
+          const sel = document.createElement("select");
+          sel.className = "mat-family";
+          const ph = document.createElement("option");
+          ph.value = "";
+          ph.textContent = "Asignar proyecto...";
+          sel.appendChild(ph);
+          free.forEach(p => {
+            const o = document.createElement("option");
+            o.value = String(p.id);
+            o.textContent = p.name || "Proyecto sin nombre";
+            sel.appendChild(o);
+          });
+          const add = document.createElement("button");
+          add.type = "button";
+          add.textContent = "Asignar";
+          add.style.background = "#16a34a";
+          add.addEventListener("click", async () => {
+            if (!sel.value) return;
+            add.disabled = true;
+            const { error: e } = await db.from("project_assignments")
+              .insert({ project_id: sel.value, user_id: t.auth_user_id });
+            if (e && e.code !== "23505") {
+              alert("No se pudo asignar: " + e.message);
+              add.disabled = false;
+              return;
+            }
+            showTech(t);
+          });
+          const row = document.createElement("div");
+          row.className = "assign-row";
+          row.append(sel, add);
+          panel.appendChild(row);
+        }
+ 
+        // ----- Planos asignados (mismas columnas que en "sin asignar") -----
+        panel.appendChild(section("Planos asignados"));
+        if ((pl.data || []).length === 0) {
+          panel.appendChild(empty("Todavía no tiene planos asignados."));
+        } else {
+          panel.appendChild(makeTable(
+            [...PLAN_HEADERS, "", ""],
+            sortBy(pl.data, "title").map(d => {
+              const un = document.createElement("button");
+              un.type = "button";
+              un.className = "secondary";
+              un.textContent = "Desasignar";
+              un.addEventListener("click", async () => {
+                un.disabled = true;
+                const { data: ok, error: e } = await db.from("drawing_files")
+                  .update({ assigned_to: null }).eq("id", d.id).select("id");
+                if (e || !ok || ok.length === 0) {
+                  alert("No se pudo desasignar" + (e ? ": " + e.message : "."));
+                  un.disabled = false;
+                  return;
+                }
+                showTech(t);
+                if (opts.onPlansChanged) opts.onPlansChanged();
+              });
+              return [...planCells(d, projMap), openBtn(d), un];
+            })
+          ));
+        }
+      }
+ 
+      // Un botón redondo por técnico, con iniciales y número de proyectos
+      techs.forEach(t => {
+        const b = document.createElement("button");
+        b.className = "chip";
+        const av = document.createElement("span");
+        av.className = "avatar";
+        av.textContent = initials(t.full);
+        const name = document.createElement("span");
+        name.textContent = t.full;
+        const count = document.createElement("span");
+        count.className = "count";
+        count.textContent = counts[t.auth_user_id] || 0;
+        countEls[t.auth_user_id] = count;
+ 
+        b.append(av, name, count);
+        b.addEventListener("click", () => {
+          [...chips.children].forEach(x => x.classList.toggle("active", x === b));
+          showTech(t);
+        });
+        chips.appendChild(b);
+      });
+ 
+      return { reshow: () => { if (current) showTech(current); } };
+    }
+ 
+
+
+    
  // Fecha de hoy en formato AAAA-MM-DD (hora local)
     const todayISO = () =>
       new Date(Date.now() - new Date().getTimezoneOffset() * 60000)
@@ -1662,12 +1974,34 @@ const DRAW_EXT = ["pdf", "dwg", "dxf", "png", "jpg", "jpeg", "xlsx", "docx"];
  
     const fmtSize = b =>
       b >= 1048576 ? (b / 1048576).toFixed(1) + " MB"
-                   : Math.max(1, Math.round(b / 1024)) + " KB";
+      : Math.max(1, Math.round(b / 1024)) + " KB";
  
     async function loadDrawings() {
       const content = $("moduleContent");
       $("moduleMessage").textContent = "";
       content.replaceChildren();
+      const manager = isManager();
+ 
+      // Proyectos que puedes ver
+      const { data: projData } = await db.from("projects").select("id, name");
+      const projects = sortBy(projData || [], "name");
+      const projName = {};
+      projects.forEach(p => { projName[String(p.id)] = p.name || "Proyecto sin nombre"; });
+ 
+      // Técnicos (solo el gerente), para el desplegable "Asignar a"
+      let techs = [];
+      if (manager) {
+        const { data } = await db.from("employees")
+          .select("auth_user_id, first_name, last_name, email")
+          .eq("app_role", "tecnico");
+        techs = sortBy((data || []).map(t => ({
+          ...t,
+          full: [t.first_name, t.last_name].filter(Boolean).join(" ") || t.email
+        })), "full");
+      }
+ 
+      let files = [];
+      let techApi = null;
  
       // ----- Formulario de subida -----
       const form = document.createElement("form");
@@ -1684,6 +2018,19 @@ const DRAW_EXT = ["pdf", "dwg", "dxf", "png", "jpg", "jpeg", "xlsx", "docx"];
  
       const titleIn = field("Título del plano",
         Object.assign(document.createElement("input"), { type: "text" }), true);
+ 
+      const projSel = field("Proyecto", document.createElement("select"), true);
+      const ph = document.createElement("option");
+      ph.value = "";
+      ph.textContent = projects.length ? "Selecciona el proyecto..." : "No tienes proyectos asignados";
+      projSel.appendChild(ph);
+      projects.forEach(p => {
+        const o = document.createElement("option");
+        o.value = String(p.id);
+        o.textContent = projName[String(p.id)];
+        projSel.appendChild(o);
+      });
+ 
       const descIn = field("Descripción",
         Object.assign(document.createElement("input"), { type: "text" }));
       const fileIn = field("Archivo",
@@ -1702,59 +2049,87 @@ const DRAW_EXT = ["pdf", "dwg", "dxf", "png", "jpg", "jpeg", "xlsx", "docx"];
       form.appendChild(foot);
  
       const heading = document.createElement("h3");
-      heading.textContent = "Planos guardados";
       heading.style.marginTop = "28px";
       const list = document.createElement("div");
  
-      content.append(form, heading, list);
+      if (manager) {
+        const techBox = document.createElement("div");
+        techBox.className = "card";
+        techBox.style.cssText = "margin:24px 0 0;";
+        content.append(form, techBox, heading, list);
+        var techHost = techBox;
+      } else {
+        content.append(form, heading, list);
+      }
  
-      // ----- Lista de planos -----
+      // ----- Lista: sin asignar (gerente) o mis planos (técnico) -----
+      function buildAssign(d) {
+        const wrap = document.createElement("div");
+        wrap.style.cssText = "display:flex;gap:8px;align-items:center;";
+ 
+        const sel = document.createElement("select");
+        sel.className = "mat-family";
+        const p0 = document.createElement("option");
+        p0.value = "";
+        p0.textContent = techs.length ? "Técnico..." : "No hay técnicos";
+        sel.appendChild(p0);
+        techs.forEach(t => {
+          const o = document.createElement("option");
+          o.value = t.auth_user_id;
+          o.textContent = t.full;
+          sel.appendChild(o);
+        });
+ 
+        const go = document.createElement("button");
+        go.type = "button";
+        go.textContent = "Asignar";
+        go.style.background = "#16a34a";
+        go.addEventListener("click", async () => {
+          if (!sel.value) return;
+          go.disabled = true;
+          const { data: ok, error } = await db.from("drawing_files")
+            .update({ assigned_to: sel.value }).eq("id", d.id).select("id");
+          if (error || !ok || ok.length === 0) {
+            alert("No se pudo asignar" + (error ? ": " + error.message : "."));
+            go.disabled = false;
+            return;
+          }
+          await refresh();                 // sale de "sin asignar"
+          if (techApi) techApi.reshow();   // aparece en el técnico
+        });
+ 
+        wrap.append(sel, go);
+        return wrap;
+      }
+ 
+      function draw() {
+        const rows = manager ? files.filter(d => !d.assigned_to) : files;
+        heading.textContent = manager ? "Planos sin asignar" : "Mis planos";
+ 
+        if (rows.length === 0) {
+          list.textContent = manager ? "No hay planos sin asignar." : "Aún no tienes planos.";
+          return;
+        }
+ 
+        const headers = [...PLAN_HEADERS, ...(manager ? ["Asignar a"] : []), ""];
+        list.replaceChildren(makeTable(headers, sortBy(rows, "title").map(d => [
+          ...planCells(d, projName),
+          ...(manager ? [buildAssign(d)] : []),
+          openBtn(d)
+        ])));
+      }
+ 
       async function refresh() {
-        list.textContent = "Cargando planos...";
         const { data, error } = await db
-          .from("drawing_files")
-          .select("*")
+          .from("drawing_files").select("*")
           .order("uploaded_at", { ascending: false });
- 
         if (error) {
           list.textContent = "No se pudieron cargar los planos: " + error.message;
           return;
         }
-        if (!data || data.length === 0) {
-          list.textContent = "Aún no hay planos subidos.";
-          return;
-        }
- 
-        list.replaceChildren(makeTable(
-          ["Título", "Descripción", "Archivo", "Tamaño", "Subido", ""],
-          sortBy(data, "title").map(d => {
-            const open = document.createElement("button");
-            open.type = "button";
-            open.textContent = "Abrir";
-            open.addEventListener("click", async () => {
-              // Se abre la pestaña antes del await para que no la bloquee el navegador
-              const w = window.open("about:blank", "_blank");
-              const { data: signed, error: err } = await db.storage
-                .from("planos").createSignedUrl(d.file_path, 120);
-              if (err) {
-                if (w) w.close();
-                alert("No se pudo abrir el archivo: " + err.message);
-                return;
-              }
-              if (w) w.location.href = signed.signedUrl;
-              else window.open(signed.signedUrl, "_blank");
-            });
- 
-            return [
-              d.title, d.description, d.file_name,
-              d.size_bytes ? fmtSize(d.size_bytes) : "—",
-              new Date(d.uploaded_at).toLocaleString("es-ES"),
-              open
-            ];
-          })
-        ));
+        files = data || [];
+        draw();
       }
- 
  
       // ----- Subir archivo -----
       form.addEventListener("submit", async (event) => {
@@ -1779,7 +2154,6 @@ const DRAW_EXT = ["pdf", "dwg", "dxf", "png", "jpg", "jpeg", "xlsx", "docx"];
         status.style.color = "#667085";
         status.textContent = "Subiendo...";
  
-        // Nombre interno único: evita choques y caracteres raros. El nombre original se guarda aparte.
         const path = crypto.randomUUID() + "." + ext;
  
         try {
@@ -1791,15 +2165,17 @@ const DRAW_EXT = ["pdf", "dwg", "dxf", "png", "jpg", "jpeg", "xlsx", "docx"];
  
           const ins = await db.from("drawing_files").insert({
             title: titleIn.value.trim(),
+            project_id: projSel.value,
             description: descIn.value.trim() || null,
             file_path: path,
             file_name: file.name,
             mime_type: file.type || null,
-            size_bytes: file.size
+            size_bytes: file.size,
+            // Lo que sube un técnico queda asignado a él; lo del gerente queda sin asignar
+            assigned_to: manager ? null : currentUser.id
           });
  
           if (ins.error) {
-            // Si falla el registro, se borra el archivo para no dejar huérfanos
             await db.storage.from("planos").remove([path]);
             throw ins.error;
           }
@@ -1817,9 +2193,12 @@ const DRAW_EXT = ["pdf", "dwg", "dxf", "png", "jpg", "jpeg", "xlsx", "docx"];
         }
       });
  
+      list.textContent = "Cargando planos...";
       await refresh();
+      if (manager) techApi = await renderTechnicians(techHost, { onPlansChanged: refresh });
     }
  
+      
 
     // Navegación entre módulos.
     document.querySelectorAll("[data-page]").forEach(button => {
@@ -2533,7 +2912,25 @@ const DRAW_EXT = ["pdf", "dwg", "dxf", "png", "jpg", "jpeg", "xlsx", "docx"];
       }
     }
 
-    
+     // 11. Restaurar una sesión guardada al abrir la página.
+    async function initialize() {
+      showLogin();
+
+      const { data, error } = await db.auth.getSession();
+      if (error) {
+        showLogin("No se pudo comprobar la sesión: " + error.message);
+        return;
+      }
+
+      if (data.session) {
+        try {
+          await enterApplication(data.session.user);
+        } catch (error) {
+          console.error("No se pudo restaurar el perfil:", error.message);
+        }
+      }
+    }
+
     // 12. Diagnóstico de conexión y permisos de Supabase.
     async function diagnosticarSupabase() {
       console.group("Diagnóstico de Industrial Manager");
